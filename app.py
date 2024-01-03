@@ -172,7 +172,7 @@ def display_Sidebar():
         st.session_state.selboxcsv = None
         st.rerun() 
 
-    st.sidebar.image("./static/DSCF5048.jpg")
+    st.sidebar.image("./static/DSCF5048.JPG")
     st.sidebar.link_button("Go to gallery URL", "https://streamlit.io/gallery")
 
 
