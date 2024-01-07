@@ -9,6 +9,8 @@
 # Cntl+C to stop
 
 # Put your app in a public GitHub repo (and make sure it has a requirements.txt!)
+# Use pip freeze
+# https://learnpython.com/blog/python-requirements-file/
 # Sign into share.streamlit.io
 # Click 'Deploy an app' and then paste in your GitHub URL
 
@@ -22,12 +24,14 @@ import altair as alt
 from vega_datasets import data
 from bokeh.plotting import figure
 from bokeh.models import LinearAxis, Range1d
+from bokeh.models import ColumnDataSource, FactorRange
+from bokeh.transform import factor_cmap
 from functions import *
 from other_app_defs import *
 from varclushi import VarClusHi
 from scipy.stats import norm
 from sklearn import metrics
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
@@ -599,6 +603,7 @@ def create_wDEVOOT():
                     return woetbl.loc[cnt-1,'WOE']
                 for r in range(cnt):
                     if x_ <= woetbl.loc[r,'max']: return woetbl.loc[r,'WOE']
+                return woetbl.loc[cnt-1,'WOE']
             wDEV['w'+v] = DEV[v].apply(lambda x: applywoe(x))
             wOOT['w'+v] = OOT[v].apply(lambda x: applywoe(x))
             # Replace variables with missings, with WoE-based counterparts
@@ -715,6 +720,7 @@ def get_metrics(y_, p_, typ, mdl):
     ks = tpr[idx] - fpr[idx]
     p_thresh = thresholds[idx]
     newp_ = np.where(p_[:,1] > p_thresh, True, False)
+    # CM Metrics
     CM = confusion_matrix(y_, newp_)
     TN, FP, FN, TP = CM.ravel() 
     Precision = round(precision_score(y_, newp_),3) # PS = TP / (TP + FP)
@@ -727,8 +733,43 @@ def get_metrics(y_, p_, typ, mdl):
                      "TP", "TN", "FP", "FN", "Precision","Recall","F1"]
     return ROC_, p_thresh, CM_TBL_
     
+def Rank_p(y_, p_, yoot_, poot_):
+    prank = pd.concat([pd.DataFrame(y_), pd.DataFrame(p_[:,1])], axis=1)
+    prank.columns=["y", "p"]
+    pootrank = pd.concat([pd.DataFrame(yoot_), pd.DataFrame(poot_[:,1])], axis=1)
+    pootrank.columns=["y", "p"]
+    prank.sort_values(by='p', ascending=False, inplace=True)
+    prank.reset_index(drop=True, inplace=True)
+    prank['pct_'] = (prank.index+1)/st.session_state.N_DEV # df.index is _N_-1
+    prank['changeflag'] = prank['p'].diff()
+    global j_; j_=1
+    def jinc(): global j_; j_+=1; return j_
+    prank['decile'] = prank.apply(
+        lambda x: jinc() if x['changeflag']<0 and 
+        x['pct_'] > j_/10 else j_, axis=1)
+    prankg = prank.groupby('decile', as_index=False).agg(
+        N_dev=('y','count'), Nb_dev=('y','sum'), min=('p','min'))
+    prankg['Npct_dev'] = prankg['N_dev'] / st.session_state.N_DEV
+    prankg['br_dev'] = prankg['Nb_dev'] / prankg['N_dev']
+    cnt = len(prankg)
+    def applyrank(x_):
+        for r in range(cnt): 
+            if x_ >= prankg.loc[r,'min']: return r+1
+        return cnt
+    pootrank['decile'] = pootrank['p'].apply(lambda x: applyrank(x))
+    pootrankg = pootrank.groupby('decile', as_index=False).agg(
+        N_oot=('y','count'), Nb_oot=('y','sum'))
+    pootrankg['Npct_oot'] = pootrankg['N_oot'] / st.session_state.N_OOT
+    pootrankg['br_oot'] = pootrankg['Nb_oot'] / pootrankg['N_oot']
+    prankf = prankg.set_index('decile').join(
+        pootrankg.set_index('decile'))
+    prankf.reset_index(inplace=True)		
+    return prankf
+
 def Model_LOGISTIC(X_, y_, Xoot_, yoot_):
+    print("Model_LOGISTIC: ", st.session_state.AppState)
     LR = None; LR_RESULTS_ = {}
+    # Initial Reg
     LR = LogisticRegression(
         random_state=0, max_iter=1000, n_jobs=-1).fit(X_, y_) 
     p = LR.predict_proba(X_) # ndarray p_0 & p_1, use [:,1]
@@ -736,6 +777,7 @@ def Model_LOGISTIC(X_, y_, Xoot_, yoot_):
     pval_high = PARAMS[
         (PARAMS['pval']>.05) & (PARAMS['vname'] != "Intercept")]['waldchisq'].min()
     X_temp = X_.copy(); Xoot_temp = Xoot_.copy()
+    # Makeshift stepwise Reg
     for i in range(1,len(X_.columns)): 
         if math.isnan(pval_high): break
         vname_out = PARAMS[PARAMS['waldchisq']==pval_high]['vname'].item()
@@ -755,7 +797,37 @@ def Model_LOGISTIC(X_, y_, Xoot_, yoot_):
     LR_RESULTS_['ptdev'] = ptdev
     LR_RESULTS_['ROC_OOT'] = ROC_OOT; LR_RESULTS_['CM_OOT'] = CM_OOT
     LR_RESULTS_['ptoot'] = ptoot
+    LR_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
     return LR_RESULTS_
+
+def Add_Interactions_LR(X_, y_, Xoot_):
+    VLISTF_N = st.session_state.VLISTF_N
+    VLISTF_C = st.session_state.VLISTF_C
+    NLEVELS_TBL = st.session_state.NLEVELS_TBL
+    ilist = NLEVELS_TBL[NLEVELS_TBL['misspct']==0]['vname'].tolist()
+    ilist = [item for item in ilist if item in VLISTF_N]
+    df = pd.DataFrame()
+    Xi = X_.copy(); Xioot = Xoot_.copy()
+    for i in ilist:
+        for j in ilist:
+            if ilist.index(i) <= ilist.index(j):
+                iname = "interact_"+str(ilist.index(i))+"_"+str(ilist.index(j))
+                Xi[iname] = X_[i] * X_[j]
+                Xioot[iname] = Xoot_[i] * Xoot_[j]
+                Xi_ = Xi[[iname]]
+                iLR = LogisticRegression(
+                    random_state=0, fit_intercept=False).fit(Xi_, y_) 
+                ip = iLR.predict_proba(Xi_)
+                iroc, iptdev, icm_dev = get_metrics(y_,ip,iname,"iLR")
+                icm_dev.loc[0,'A']=i
+                icm_dev.loc[0,'B']=j
+                df = pd.concat([df,icm_dev[['DS','A','B','AUC']]])
+    imap = df[(df['AUC']>.5)].sort_values(by='AUC', ascending=False).head(5)
+    topinters = imap['DS'].tolist()
+    Xi = Xi[[v for v in Xi.columns if v in (VLISTF_N + VLISTF_C + topinters)]]
+    Xioot = Xioot[[v for v in Xioot.columns if v in (VLISTF_N + VLISTF_C + topinters)]]
+    st.session_state.IMAP = imap
+    return Xi, Xioot
 
 def Model_DTREE(X_, y_, Xoot_, yoot_, doHyper=0):    
     DT = None; DT_RESULTS_ = {}
@@ -787,6 +859,7 @@ def Model_DTREE(X_, y_, Xoot_, yoot_, doHyper=0):
     DT_RESULTS_['ptdev'] = ptdev
     DT_RESULTS_['ROC_OOT'] = ROC_OOT; DT_RESULTS_['CM_OOT'] = CM_OOT
     DT_RESULTS_['ptoot'] = ptoot
+    DT_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
     DT_RESULTS_['DT'] = DT
     return DT_RESULTS_
 
@@ -811,7 +884,7 @@ def Model_RFOREST(X_, y_, Xoot_, yoot_, doHyper=0):
     else:
         RF = RandomForestClassifier(
             random_state=0, min_samples_leaf=minleafsize, n_jobs=-1,
-            n_estimators=250, max_depth=10).fit(X_, y_) 
+            n_estimators=150, max_depth=10).fit(X_, y_) 
     p = RF.predict_proba(X_)
     poot = RF.predict_proba(Xoot_)
     FEATIMP = pd.DataFrame([RF.feature_names_in_, RF.feature_importances_]).T
@@ -825,10 +898,13 @@ def Model_RFOREST(X_, y_, Xoot_, yoot_, doHyper=0):
     RF_RESULTS_['ptdev'] = ptdev
     RF_RESULTS_['ROC_OOT'] = ROC_OOT; RF_RESULTS_['CM_OOT'] = CM_OOT
     RF_RESULTS_['ptoot'] = ptoot
+    RF_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
     return RF_RESULTS_
 
 def Model_GBM(X_, y_, Xoot_, yoot_, doHyper=0): 
     GBM = None; GBM_RESULTS_ = {}
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_, y_, test_size=.2, stratify=y_, random_state=0)
     minleafsize = int(0.01*st.session_state.N_DEV)
     if doHyper == 1:
         param_grid = {'n_estimators': [100, 250],
@@ -844,11 +920,13 @@ def Model_GBM(X_, y_, Xoot_, yoot_, doHyper=0):
             max_features='sqrt',
             n_estimators=grid_search.best_params_['n_estimators'],
             learning_rate=grid_search.best_params_['learning_rate'],
-            max_depth=grid_search.best_params_['max_depth']).fit(X_, y_)  
+            max_depth=grid_search.best_params_['max_depth']).fit(
+                X_train, y_train)  
     else:
         GBM = GradientBoostingClassifier(
             random_state=0, min_samples_leaf=minleafsize, 
-            n_estimators=250, max_depth=10, max_features='sqrt').fit(X_, y_)  
+            n_estimators=150, max_depth=10, max_features='sqrt').fit(
+                X_train, y_train)  
     p = GBM.predict_proba(X_)
     poot = GBM.predict_proba(Xoot_)
     FEATIMP = pd.DataFrame([GBM.feature_names_in_, GBM.feature_importances_]).T
@@ -862,10 +940,14 @@ def Model_GBM(X_, y_, Xoot_, yoot_, doHyper=0):
     GBM_RESULTS_['ptdev'] = ptdev
     GBM_RESULTS_['ROC_OOT'] = ROC_OOT; GBM_RESULTS_['CM_OOT'] = CM_OOT
     GBM_RESULTS_['ptoot'] = ptoot
+    GBM_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
     return GBM_RESULTS_
 
 def Model_XGB(X_, y_, Xoot_, yoot_, doHyper=0): 
     XGB = None; XGB_RESULTS_ = {}
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_, y_, test_size=.2, stratify=y_, random_state=0)
+    eval_set = [(X_test, y_test)]
     if doHyper == 1:
         param_grid = {'n_estimators': [100, 250],
                       'learning_rate': [0.01, 0.05, 0.1, 0.2],
@@ -874,14 +956,15 @@ def Model_XGB(X_, y_, Xoot_, yoot_, doHyper=0):
         grid_search = GridSearchCV(xgb_, param_grid, cv=4)
         grid_search.fit(X_, y_)  
         XGB = xgb.XGBClassifier(
-            random_state=0, n_jobs=-1,
+            random_state=0, n_jobs=-1, 
             n_estimators=grid_search.best_params_['n_estimators'],
             learning_rate=grid_search.best_params_['learning_rate'],
-            max_depth=grid_search.best_params_['max_depth']).fit(X_, y_)  
+            max_depth=grid_search.best_params_['max_depth']).fit(
+                X_train, y_train, eval_set=eval_set, early_stopping_rounds=50)  
     else:
         XGB = xgb.XGBClassifier(
-            random_state=0, n_jobs=-1, max_depth=10, 
-            n_estimators=250).fit(X_, y_)  
+            random_state=0, n_jobs=-1, max_depth=10, n_estimators=150).fit(
+                X_train, y_train, eval_set=eval_set, early_stopping_rounds=50)  
     p = XGB.predict_proba(X_)
     poot = XGB.predict_proba(Xoot_)
     # xgb.plot_importance(XGB) is absolute, not % based
@@ -896,21 +979,32 @@ def Model_XGB(X_, y_, Xoot_, yoot_, doHyper=0):
     XGB_RESULTS_['ptdev'] = ptdev
     XGB_RESULTS_['ROC_OOT'] = ROC_OOT; XGB_RESULTS_['CM_OOT'] = CM_OOT
     XGB_RESULTS_['ptoot'] = ptoot
+    XGB_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
     return XGB_RESULTS_
 
 def Model_MLP(X_, y_, Xoot_, yoot_, doHyper=0): 
     MLP = None; MLP_RESULTS_ = {}
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_, y_, test_size=.2, stratify=y_, random_state=0)
+    eval_set = [(X_test, y_test)]
     if doHyper == 1:
         param_grid = {'activation': ['identity', 'relu'],
-                      'max_iter': [200, 300]}
-        mlp_ = MLPClassifier(random_state=0)
+                      'max_iter': [200, 300],
+                      'learning_rate': ['constant','adaptive']}
+        mlp_ = MLPClassifier( #early_stopping
+            random_state=0, hidden_layer_sizes=(50), activation='identity')
         grid_search = GridSearchCV(mlp_, param_grid, cv=4)
         grid_search.fit(X_, y_)  
-        MLP = MLPClassifier(random_state=0, 
+        MLP = MLPClassifier(
+            random_state=0, hidden_layer_sizes=(50), 
             activation=grid_search.best_params_['activation'],
-            max_iter=grid_search.best_params_['max_iter']).fit(X_, y_)  
+            max_iter=grid_search.best_params_['max_iter'],
+            learning_rate=grid_search.best_params_['learning_rate']).fit(
+                X_train, y_train)  
     else:
-        MLP = MLPClassifier(random_state=0, max_iter=500).fit(X_, y_)  
+        MLP = MLPClassifier(
+            random_state=0, max_iter=500, hidden_layer_sizes=(100,25),
+            activation='identity').fit(X_train, y_train)  
     p = MLP.predict_proba(X_)
     poot = MLP.predict_proba(Xoot_)
     ROC_DEV, ptdev, CM_DEV = get_metrics(y_,p,"dev","MLP")
@@ -921,11 +1015,14 @@ def Model_MLP(X_, y_, Xoot_, yoot_, doHyper=0):
     MLP_RESULTS_['ptdev'] = ptdev
     MLP_RESULTS_['ROC_OOT'] = ROC_OOT; MLP_RESULTS_['CM_OOT'] = CM_OOT
     MLP_RESULTS_['ptoot'] = ptoot
+    MLP_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
     return MLP_RESULTS_
-
 
 def Model_LGB(X_, y_, Xoot_, yoot_, doHyper=0): 
     LGB = None; LGB_RESULTS_ = {}
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_, y_, test_size=.2, stratify=y_, random_state=0)
+    eval_set = [(X_test, y_test)]
     minleafsize = int(0.01*st.session_state.N_DEV)
     if doHyper == 1:
         param_grid = {'n_estimators': [100, 250],
@@ -938,14 +1035,16 @@ def Model_LGB(X_, y_, Xoot_, yoot_, doHyper=0):
         grid_search.fit(X_, y_)  
         LGB = lgb.LGBMClassifier(
             random_state=0, n_jobs=-1, min_child_samples=minleafsize,
-            importance_type='gain',
+            importance_type='gain', 
             n_estimators=grid_search.best_params_['n_estimators'],
             learning_rate=grid_search.best_params_['learning_rate'],
-            max_depth=grid_search.best_params_['max_depth']).fit(X_, y_)  
+            max_depth=grid_search.best_params_['max_depth']).fit(
+                X_train, y_train, eval_set=eval_set)  
     else:
         LGB = lgb.LGBMClassifier(
             random_state=0, n_jobs=-1, max_depth=10, importance_type='gain',
-            min_child_samples=minleafsize, n_estimators=250).fit(X_, y_)  
+            min_child_samples=minleafsize, n_estimators=150).fit(
+                X_train, y_train, eval_set=eval_set)  
     p = LGB.predict_proba(X_)
     poot = LGB.predict_proba(Xoot_)
     #st.pyplot(lgb.plot_importance(LGB).figure)
@@ -960,6 +1059,7 @@ def Model_LGB(X_, y_, Xoot_, yoot_, doHyper=0):
     LGB_RESULTS_['ptdev'] = ptdev
     LGB_RESULTS_['ROC_OOT'] = ROC_OOT; LGB_RESULTS_['CM_OOT'] = CM_OOT
     LGB_RESULTS_['ptoot'] = ptoot
+    LGB_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
     return LGB_RESULTS_
 
 
@@ -980,6 +1080,10 @@ def Oracle():
         LR_RESULTS = {}
         LR_RESULTS = Model_LOGISTIC(X, y, Xoot, yoot) 
         st.session_state.LR_RESULTS = LR_RESULTS
+        iLR_RESULTS = {}
+        Xi, Xioot = Add_Interactions_LR(X, y, Xoot)
+        iLR_RESULTS = Model_LOGISTIC(Xi, y, Xioot, yoot) 
+        st.session_state.iLR_RESULTS = iLR_RESULTS
     if st.session_state.ALT_MDLS != None:
         if "D-Tree" in st.session_state.ALT_MDLS:
             DT_RESULTS = {}      
@@ -1010,29 +1114,49 @@ def Oracle():
 def Oracle_Layout_assist(DF, mdltyp):
     ROC_DEV = DF['ROC_DEV']; ROC_OOT = DF['ROC_OOT']
     ptdev = DF['ptdev']; ptoot = DF['ptoot']
+    Rankp = DF['Rankp']
     col1, col2 = st.columns(2)
-    if mdltyp == "LOGISTIC REGRESSION":
+    if mdltyp in ("LOGISTIC REGRESSION","LOGISTIC REGRESSION - interact"):
         col1.write(DF['PARAMS'].sort_values(by='waldchisq', ascending=False))
+        if mdltyp == "LOGISTIC REGRESSION - interact":
+            col2.write(st.session_state.IMAP)
     else: 
         col1.write(DF['PARAMS'])
         if mdltyp != "MLP-NN":
             col2.write(DF['FEATIMP'].sort_values(by='Importance', ascending=False))
     st.write(pd.concat([DF['CM_DEV'], DF['CM_OOT']], ignore_index=True)) 
     if mdltyp == "DECISION TREE": st.graphviz_chart(export_graphviz(DF['DT']))
-    fig = figure(title='ROC', x_axis_label='fpr', y_axis_label='tpr')
-    fig.line(ROC_DEV['fpr'], ROC_DEV['tpr'], line_width=2, color="blue",
-             legend_label=f'ROC [dev], pthresh={round(ptdev,3)}')
-    fig.line(ROC_OOT['fpr'], ROC_OOT['tpr'], line_width=2, color="red",
-             legend_label=f'ROC [oot], pthresh={round(ptoot,3)}')
-    fig.line(ROC_DEV['fpr'], ROC_DEV['fpr'], line_width=2, color="black",
-             legend_label='', line_dash='dashed')
+    # Decile chart
+    deciles = map(str,Rankp['decile'].tolist())
+    datasrc = ['DEV', 'OOT']
+    x = [(decile, src) for decile in deciles for src in datasrc]
+    fig = figure(x_range=FactorRange(*x), 
+                 title='Decile Chart', x_axis_label='deciles', 
+                 y_axis_label='avg bad-rate', plot_height=500, plot_width=750)
+    counts = sum(zip(Rankp['br_dev'], Rankp['br_oot']), ()) 
+    source = ColumnDataSource(data=dict(x=x, counts=counts))
+    fig.vbar(x='x', top='counts', width=0.9, source=source, line_color="white",
+             fill_color=factor_cmap(
+                 'x', palette=['blue','red'], factors=datasrc, start=1, end=2))
     fig.legend.location = "bottom_right"
-    st.bokeh_chart(fig, use_container_width=True)
+    st.bokeh_chart(fig, use_container_width=False) 
+    # ROC chart
+    fig2 = figure(title='ROC', x_axis_label='fpr', y_axis_label='tpr', 
+                  plot_height=500, plot_width=500)
+    fig2.line(ROC_DEV['fpr'], ROC_DEV['tpr'], line_width=2, color="blue",
+              legend_label=f'ROC [dev], pthresh={round(ptdev,3)}')
+    fig2.line(ROC_OOT['fpr'], ROC_OOT['tpr'], line_width=2, color="red",
+              legend_label=f'ROC [oot], pthresh={round(ptoot,3)}')
+    fig2.line(ROC_DEV['fpr'], ROC_DEV['fpr'], line_width=2, color="black",
+              legend_label='', line_dash='dashed')
+    fig2.legend.location = "bottom_right"
+    st.bokeh_chart(fig2, use_container_width=False)
 
 @tictoc
 def Oracle_Layout():
     print("Oracle_Layout: ", st.session_state.AppState)
     LR_RESULTS = st.session_state.LR_RESULTS
+    iLR_RESULTS = st.session_state.iLR_RESULTS
     DT_RESULTS = st.session_state.DT_RESULTS
     RF_RESULTS = st.session_state.RF_RESULTS
     GBM_RESULTS = st.session_state.GBM_RESULTS
@@ -1043,6 +1167,12 @@ def Oracle_Layout():
     with st.expander("LOGISTIC REGRESSION", expanded=False):
         if st.session_state.AppState == "Oracle_Complete":
             Oracle_Layout_assist(LR_RESULTS, "LOGISTIC REGRESSION")
+    # LR Interaction Toggle button
+    st.session_state.interact = st.toggle(
+        "Interactions", value=False, key="interacttoggle")
+    with st.expander("LOGISTIC REGRESSION - interact", expanded=False):
+        if st.session_state.AppState == "Oracle_Complete" and st.session_state.interact == True:
+            Oracle_Layout_assist(iLR_RESULTS, "LOGISTIC REGRESSION - interact")
     if choices != None:
         with st.expander("DECISION TREE", expanded=False):
             if "D-Tree" in choices and DT_RESULTS != None:
@@ -1114,6 +1244,8 @@ def Initialize():
     if "CLUSTER" not in st.session_state: st.session_state.CLUSTER=None
     if "ALT_MDLS" not in st.session_state: st.session_state.ALT_MDLS=None
     if "LR_RESULTS" not in st.session_state: st.session_state.LR_RESULTS=None
+    if "IMAP" not in st.session_state: st.session_state.IMAP=None
+    if "iLR_RESULTS" not in st.session_state: st.session_state.iLR_RESULTS=None
     if "DT_RESULTS" not in st.session_state: st.session_state.DT_RESULTS=None
     if "RF_RESULTS" not in st.session_state: st.session_state.RF_RESULTS=None
     if "GBM_RESULTS" not in st.session_state: st.session_state.GBM_RESULTS=None
@@ -1306,6 +1438,8 @@ with Apptab8:
         st.write("CLUSTER" , st.session_state.CLUSTER)
         st.write("ALT_MDLS" , st.session_state.ALT_MDLS)
         #st.write("LR_RESULTS" , st.session_state.LR_RESULTS)
+        #st.write("iLR_RESULTS" , st.session_state.iLR_RESULTS)   
+        st.write("IMAP" , st.session_state.IMAP)
         #st.write("DT_RESULTS" , st.session_state.DT_RESULTS)
         #st.write("RF_RESULTS" , st.session_state.RF_RESULTS)
         #st.write("GBM_RESULTS" , st.session_state.GBM_RESULTS)
