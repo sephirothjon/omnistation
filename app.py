@@ -51,7 +51,6 @@ def load_csv_local(_path,_file):
     #df.reset_index() -> adds an index column
     return df
 
-
 @st.cache_data 
 def generate_data():
     X, y = make_classification(
@@ -66,7 +65,6 @@ def generate_data():
     DS_['depvar'] = y
     return DS_
 
-
 @st.cache_data     
 def get_valid_dv(ds_):
     print("get_valid_dv")
@@ -76,7 +74,6 @@ def get_valid_dv(ds_):
             ds_[v].nunique()==2 and ds_[v].min()==0 and ds_[v].max()==1):
             valid_dv_.append(v)
     return valid_dv_
-
 
 def display_Sidebar():
     print("\n\n\n\n\n")
@@ -91,12 +88,12 @@ def display_Sidebar():
         st.session_state.AppState = "Initial"
         st.session_state.DV = None
     ds_loadorrandom = c.radio(
-        "Load Data or Random Generate", ("Load","Random"), index=0, 
-        key="loadorrandom", horizontal=True, on_change=data_selector) 
+        "Load Data or Random Generate", ("Load","Random"), 
+        index=0, key="loadorrandom", horizontal=True, on_change=data_selector) 
     if ds_loadorrandom == "Random": st.session_state.disable_dsselect=True
     else: st.session_state.disable_dsselect=False
 
-    # Dataset Selection
+    # Dataset File Selection
     if 'disable_dsselect' not in st.session_state: 
         st.session_state.disable_dsselect = False
         st.session_state.ALT_MDLS=None
@@ -106,14 +103,26 @@ def display_Sidebar():
     ds_select = c.selectbox(
         'Dataset Selection', os.listdir("./csv"), on_change=ds_selector,
         index=None, placeholder="Select preloaded dataset...", key="selboxcsv",
-        disabled=st.session_state.disable_dsselect)  
+        disabled=st.session_state.disable_dsselect) 
+
+    # Upload Selection
+    ds_select2 = c.file_uploader(
+        'OR upload file', type=['csv'], accept_multiple_files=False, 
+        key="uploadcsv", on_change=ds_selector, 
+        disabled=st.session_state.disable_dsselect) 
     
     # Sidebar State Logic
-    if ds_select != None or ds_loadorrandom == "Random":
+    if ds_select != None or ds_select2 != None or ds_loadorrandom == "Random":
         if st.session_state.AppState == "Initial":
             setAppState("DS_Selected")
             if ds_loadorrandom == "Load":
-                st.session_state.DS = load_csv_local("./csv", ds_select)
+                if ds_select != None:
+                    st.session_state.DS = load_csv_local("./csv", ds_select)
+                else: 
+                    df = pd.read_csv(ds_select2)
+                    lowercase = lambda x: str(x).lower() 
+                    df.rename(lowercase, axis='columns', inplace=True)
+                    st.session_state.DS = df.copy()
             else: 
                 st.session_state.DS = generate_data()
             st.session_state.VALID_DV = get_valid_dv(st.session_state.DS)
@@ -157,8 +166,6 @@ def display_Sidebar():
         st.session_state.CP2 = st.slider(
             'manygrpsflg', 2, 50, 15, on_change=change_slider, key="cp2")
         
-    st.sidebar.caption(f"Current AppState: {st.session_state.AppState}")
-
     # Debug Toggle button
     st.session_state.DEBUGON = st.sidebar.toggle(
         "Debug", value=False, key="debugtoggle")
@@ -175,10 +182,9 @@ def display_Sidebar():
         setAppState("Initial")
         st.session_state.selboxcsv = None
         st.rerun() 
-
     st.sidebar.image("./static/DSCF5048.JPG")
+    st.sidebar.caption(f"Current AppState: {st.session_state.AppState}")
     st.sidebar.link_button("Go to gallery URL", "https://streamlit.io/gallery")
-
 
 @tictoc
 def setup_and_summary():
@@ -191,7 +197,7 @@ def setup_and_summary():
     N_DEV = len(DEV); N_OOT = len(OOT)
     NB_DEV = DEV[DV].sum(); NG_DEV = N_DEV - NB_DEV
     NB_OOT = OOT[DV].sum(); NG_OOT = N_OOT - NB_OOT
-    for v in DS.columns:
+    for v in DEV.columns:
         if v != DV: 
             VLIST.append(v)
             if DS[v].dtype=="object": VLIST_C.append(v)
@@ -220,11 +226,12 @@ def setup_and_summary():
     st.session_state.NG_OOT = NG_OOT
     st.session_state.NB_OOT = NB_OOT
 
-
 @tictoc
 def setup_and_summary_layout():
     print("setup_and_summary_layout: ", st.session_state.AppState)
+    DS = st.session_state.DS
     DEV = st.session_state.DEV
+    OOT = st.session_state.OOT
     NUMVARS = st.session_state.NUMVARS
     NUMVARS_N = st.session_state.NUMVARS_N
     NUMVARS_C = st.session_state.NUMVARS_C
@@ -252,6 +259,7 @@ def setup_and_summary_layout():
                     {NUMVARS_C} Non-Numeric Variables]''')
     col2.write(DEV.dtypes.to_frame())
     # DS.describe(),DS.describe(include='all'),include=[np.number],exclude=[np.number]
+    # Summary tables
     c.markdown('''Numeric Variables (including DV) [:blue[DEV] Only]:''')
     c.write(st.session_state.SUMMARY_N)
     c.markdown('''Non-Numeric Variables [:blue[DEV] Only]:''')
@@ -259,9 +267,23 @@ def setup_and_summary_layout():
         c.write(st.session_state.SUMMARY_C)
     else: 
         c.warning("There are no Non-Numeric Variables in the DEV data", icon="⚠️")
+    # Exclude Variables
+    def update_excludevars(): 
+        st.session_state.excl_flag = 1
+    st.session_state.ExcludeVars = st.multiselect(
+        "Exclude Variables", DS.columns, default=None, key="ExclVarsSelect", 
+        placeholder="Select Variable (Optional)", 
+        on_change=update_excludevars)
+    if st.session_state.excl_flag == 1 and st.session_state.ExcludeVars != None:
+        keepers = [x for x in DS.columns if x not in st.session_state.ExcludeVars]
+        st.session_state.DEV = DEV[DEV.columns.intersection(keepers)]
+        st.session_state.OOT = OOT[OOT.columns.intersection(keepers)]
+        st.session_state.excl_flag = 0   
+        setup_and_summary()
+        setAppState("Setup_Complete")
+    # 10 Recs of DEV table
     with st.expander("10 Records from DEV", expanded=False):
         st.dataframe(DEV.head(10))
-
 
 @tictoc
 def Numer_Only_Compute():
@@ -324,7 +346,6 @@ def Numer_Only_Compute():
     st.session_state.VLISTF_N = VLISTF_N
     st.session_state.RANKPLOTMAP_TBL = RANKPLOTMAP_TBL
 
-
 @tictoc
 def Numer_Only_Layout():
     print("Numer_Only_Layout: ", st.session_state.AppState)
@@ -369,7 +390,7 @@ def Numer_Only_Layout():
         maxbr = df["br"].max().item()
         minmaxdiff = maxbr - minbr
         p = figure(title="Pop pct & BR by groups", x_range=df["range"],
-                   x_axis_label='grps', plot_width = 300, plot_height = 300)
+                   x_axis_label='grps', plot_width = 600, plot_height = 400)
         p.vbar(df["range"], top=df["Npct"], legend_label="Npct", width=.5, 
                color="blue", alpha=.5)
         p.extra_y_ranges['Second'] = Range1d(
@@ -383,7 +404,6 @@ def Numer_Only_Layout():
         p.xaxis.major_label_orientation = math.pi/4
         c.bokeh_chart(p, use_container_width=True)
         with c.expander("Variable Summary Table", expanded=False): st.write(df)
-
 
 @tictoc
 def NonNumer_Only_Compute():
@@ -440,7 +460,6 @@ def NonNumer_Only_Compute():
     st.session_state.NLEVELS_C_TBL = NLEVELS_C_TBL
     st.session_state.RANKPLOT_C_TBL = RANKPLOT_C_TBL
 
-
 @tictoc
 def NonNumer_Only_Layout():
     print("NonNumer_Only_Layout: ", st.session_state.AppState)
@@ -471,7 +490,7 @@ def NonNumer_Only_Layout():
         maxbr = df["br"].max().item()
         minmaxdiff = maxbr - minbr
         p = figure(title="Pop pct & BR by groups", x_range=df["grp"],
-                   x_axis_label='grps', plot_width = 300, plot_height = 300)
+                   x_axis_label='grps', plot_width = 600, plot_height = 400)
         p.vbar(df["grp"], top=df["Npct"], legend_label="Npct", width=.5, 
                color="blue", alpha=.5)
         p.extra_y_ranges['Second'] = Range1d(
@@ -551,7 +570,6 @@ def nWoE():
     st.session_state.N_WOE = N_WOE
     st.session_state.IV_N = IV_N
 
-
 @tictoc
 def cWoE():
     print("cWoE: ", st.session_state.AppState)
@@ -577,7 +595,6 @@ def cWoE():
         k+=1
     st.session_state.C_WOE = C_WOE
     st.session_state.IV_C = IV_C
-
 
 @tictoc
 def create_wDEVOOT():
@@ -632,7 +649,6 @@ def create_wDEVOOT():
     st.session_state.wDEV = wDEV
     st.session_state.wOOT = wOOT
 
-
 @tictoc
 def PSI():    
     print("PSI: ", st.session_state.AppState)
@@ -656,7 +672,6 @@ def PSI():
         PSI = pd.concat([PSI, temp], ignore_index=True) #st.write(v, "PSI", df)
     st.session_state.PSI = PSI
 
-
 @tictoc
 def CORR():
     print("CORR: ", st.session_state.AppState)
@@ -664,25 +679,90 @@ def CORR():
     VLISTF_C = st.session_state.VLISTF_C
     DV = st.session_state.DV
     wDEV = st.session_state.wDEV
-    CORRMAT = pd.DataFrame(); CORRIV = pd.DataFrame()
+    wOOT = st.session_state.wOOT
+    IVCORR = pd.DataFrame(); DVCORR = pd.DataFrame()
+    CORRMAT = pd.DataFrame()
+    # Get IV Corr
     df = wDEV[[v for v in wDEV.columns 
+               if v in (VLISTF_N + VLISTF_C)]]
+    ivcormat = df.corr(method='spearman')
+    ilist = VLISTF_N + VLISTF_C
+    k=0
+    for i in ilist:
+        for j in ilist:
+            if ilist.index(i) < ilist.index(j):
+                IVCORR.loc[k,'V1'] = i
+                IVCORR.loc[k,'V2'] = j
+                IVCORR.loc[k,'corr'] = ivcormat.iloc[
+                    ilist.index(i),ilist.index(j)]
+                k+=1
+    IVCORR['abscorr'] = abs(IVCORR['corr'])
+    IVCORR.sort_values(by='abscorr', ascending=False, inplace=True)
+    # Get DV Corr for DEV
+    df2 = wDEV[[v for v in wDEV.columns 
                if v==DV or v in (VLISTF_N + VLISTF_C)]]
-    CORRMAT = df.corr(method='spearman')
-    CORRIV = CORRMAT[[DV]]
-    CORRIV['vname'] = CORRIV.index
-    CORRIV.reset_index(drop=True, inplace=True)
-    CORRIV.rename(columns={DV: 'corr'}, inplace=True)
-    CORRIV = CORRIV[CORRIV['vname'] != DV]
-    CORRIV['abscorr'] = abs(CORRIV['corr'])
-    st.session_state.CORRMAT = CORRMAT
-    st.session_state.CORRIV = CORRIV
+    CORRMAT = df2.corr(method='spearman')
+    DVCORR = CORRMAT[[DV]]
+    DVCORR['vname'] = DVCORR.index
+    DVCORR.reset_index(drop=True, inplace=True)
+    DVCORR.rename(columns={DV: 'corr'}, inplace=True)
+    DVCORR = DVCORR[DVCORR['vname'] != DV]
+    DVCORR['abscorr'] = abs(DVCORR['corr'])
+    # Get DV corr for OOT
+    df3 = wOOT[[v for v in wOOT.columns 
+                if v==DV or v in (VLISTF_N + VLISTF_C)]]
+    CORRMAT_oot = df3.corr(method='spearman')
+    DVCORR_oot = CORRMAT_oot[[DV]]
+    DVCORR_oot['vname'] = DVCORR_oot.index
+    DVCORR_oot.reset_index(drop=True, inplace=True)
+    DVCORR_oot.rename(columns={DV: 'corr_oot'}, inplace=True)
+    DVCORR_oot = DVCORR_oot[DVCORR_oot['vname'] != DV]
+    DVCORR_oot['abscorr_oot'] = abs(DVCORR_oot['corr_oot'])
+    DVCORR = DVCORR.set_index('vname').join(DVCORR_oot.set_index('vname'))
+    DVCORR.reset_index(inplace=True)
 
+    DVCORR['chng_sign'] = DVCORR.apply(
+        lambda x: "Yes" if x['corr']*x['corr_oot'] < 0 else "No", axis=1)
+
+    DVCORR = DVCORR.sort_values(by='abscorr', ascending=False)
+    st.session_state.IVCORR = IVCORR
+    st.session_state.CORRMAT = CORRMAT
+    st.session_state.DVCORR = DVCORR
+
+@tictoc
+def SFA():
+    print("SFA: ", st.session_state.AppState)
+    VLISTF_N = st.session_state.VLISTF_N
+    VLISTF_C = st.session_state.VLISTF_C
+    DV = st.session_state.DV
+    wDEV = st.session_state.wDEV
+    wOOT = st.session_state.wOOT
+    X = wDEV[[v for v in wDEV.columns if v in (VLISTF_N + VLISTF_C)]]
+    Xoot = wOOT[[v for v in wOOT.columns if v in (VLISTF_N + VLISTF_C)]]
+    y = wDEV[[DV]].values.ravel()
+    yoot = wOOT[[DV]].values.ravel()
+    df = pd.DataFrame()
+    for v in VLISTF_N + VLISTF_C:
+        X_ = X[[v]]
+        Xoot_ = Xoot[[v]]
+        sfaLR = LogisticRegression(random_state=0).fit(X_, y) 
+        p = sfaLR.predict_proba(X_)
+        poot = sfaLR.predict_proba(Xoot_)
+        sfarocdev, sfaptdev, sfacm_dev = get_metrics(y,p,"dev",v)
+        sfarocoot, sfaptoot, sfacm_oot = get_metrics(yoot,poot,"oot",v)
+        sfacm_dev.loc[0,'AUC_oot'] = sfacm_oot.loc[0,'AUC']
+        sfacm_dev.loc[0,'KS_oot'] = sfacm_oot.loc[0,'KS']
+        sfacm_dev.loc[0,'GINI_oot'] = sfacm_oot.loc[0,'GINI']
+        df = pd.concat([df,sfacm_dev[[
+            'DS','Model','AUC','KS','GINI','AUC_oot','KS_oot','GINI_oot']]])
+    st.session_state.SFA = df.sort_values(by='AUC', ascending=False)
 
 @tictoc
 def Cluster():
     print("Cluster: ", st.session_state.AppState)
     VLISTF_N = st.session_state.VLISTF_N
     VLISTF_C = st.session_state.VLISTF_C
+    NLEVELS_TBL = st.session_state.NLEVELS_TBL
     wDEV = st.session_state.wDEV
     CLUSTER = pd.DataFrame()
     df = wDEV[[v for v in wDEV.columns if v in (VLISTF_N + VLISTF_C)]]
@@ -690,8 +770,20 @@ def Cluster():
     varclus.varclus()
     CLUSTER = varclus.rsquare
     #varclus.clusters
+    df = pd.DataFrame()
+    misslist = NLEVELS_TBL[NLEVELS_TBL['misspct']!=0]['vname'].tolist()
+    k=0
+    for v in VLISTF_N + VLISTF_C: 
+        df.loc[k,'Variable'] = v
+        if v in VLISTF_N: df.loc[k,'N_C'] = "Numer"
+        else: df.loc[k,'N_C'] = "Char"
+        if v in VLISTF_C + misslist: df.loc[k,'isWOE'] = "Yes"
+        else: df.loc[k,'isWOE'] = "No"	
+        k+=1
+    CLUSTER = CLUSTER.set_index('Variable').join(
+        df.set_index('Variable'))
+    CLUSTER.reset_index(inplace=True)
     st.session_state.CLUSTER = CLUSTER
-
 
 def get_params(Xmat,p_,model_):
     varnames = []; varnames.append("Intercept")
@@ -766,7 +858,17 @@ def Rank_p(y_, p_, yoot_, poot_):
     prankf.reset_index(inplace=True)		
     return prankf
 
-def Model_LOGISTIC(X_, y_, Xoot_, yoot_):
+def update_wdevoot(p_, poot_, mdl):
+    st.session_state.wDEV.reset_index(drop=True, inplace=True)
+    st.session_state.wOOT.reset_index(drop=True, inplace=True)
+    pdev_0 = pd.DataFrame(p_[:,1]).rename(columns={0: f'p_{mdl}'})
+    poot_0 = pd.DataFrame(poot_[:,1]).rename(columns={0: f'p_{mdl}'})
+    st.session_state.wDEV = pd.concat([st.session_state.wDEV, pdev_0],
+        axis=1)
+    st.session_state.wOOT = pd.concat([st.session_state.wOOT, poot_0],
+        axis=1)
+
+def Model_LOGISTIC(X_, y_, Xoot_, yoot_, merge_p_to_wdevoot=0):
     print("Model_LOGISTIC: ", st.session_state.AppState)
     LR = None; LR_RESULTS_ = {}
     # Initial Reg
@@ -790,6 +892,9 @@ def Model_LOGISTIC(X_, y_, Xoot_, yoot_):
         pval_high = PARAMS[
             (PARAMS['pval']>.05) & (PARAMS['vname'] != "Intercept")]['waldchisq'].min()
     poot = LR.predict_proba(Xoot_temp)
+    if merge_p_to_wdevoot == 1: 
+        update_wdevoot(p, poot, "LR")
+        LR_RESULTS_['AVP_N'], LR_RESULTS_['AVP_C'] = AvP_by_vgrps("LR")
     ROC_DEV, ptdev, CM_DEV = get_metrics(y_,p,"dev","LR")
     ROC_OOT, ptoot, CM_OOT = get_metrics(yoot_,poot,"oot","LR")
     LR_RESULTS_['PARAMS'] = PARAMS
@@ -801,6 +906,7 @@ def Model_LOGISTIC(X_, y_, Xoot_, yoot_):
     return LR_RESULTS_
 
 def Add_Interactions_LR(X_, y_, Xoot_):
+    print("Add_Interactions_LR: ", st.session_state.AppState)
     VLISTF_N = st.session_state.VLISTF_N
     VLISTF_C = st.session_state.VLISTF_C
     NLEVELS_TBL = st.session_state.NLEVELS_TBL
@@ -829,7 +935,8 @@ def Add_Interactions_LR(X_, y_, Xoot_):
     st.session_state.IMAP = imap
     return Xi, Xioot
 
-def Model_DTREE(X_, y_, Xoot_, yoot_, doHyper=0):    
+def Model_DTREE(X_, y_, Xoot_, yoot_, doHyper=0, merge_p_to_wdevoot=0):   
+    print("Model_DTREE: ", st.session_state.AppState) 
     DT = None; DT_RESULTS_ = {}
     minleafsize = int(0.01*st.session_state.N_DEV)
     if doHyper == 1:
@@ -848,6 +955,9 @@ def Model_DTREE(X_, y_, Xoot_, yoot_, doHyper=0):
             random_state=0, min_samples_leaf=minleafsize).fit(X_, y_)
     p = DT.predict_proba(X_) # ndarray p_0 & p_1, use [:,1]
     poot = DT.predict_proba(Xoot_)
+    if merge_p_to_wdevoot == 1: 
+        update_wdevoot(p, poot, "DT")
+        DT_RESULTS_['AVP_N'], DT_RESULTS_['AVP_C'] = AvP_by_vgrps("DT")
     FEATIMP = pd.DataFrame([DT.feature_names_in_, DT.feature_importances_]).T
     FEATIMP.columns=["vname", "Importance"]
     ROC_DEV, ptdev, CM_DEV = get_metrics(y_,p,"dev","DT")
@@ -863,7 +973,8 @@ def Model_DTREE(X_, y_, Xoot_, yoot_, doHyper=0):
     DT_RESULTS_['DT'] = DT
     return DT_RESULTS_
 
-def Model_RFOREST(X_, y_, Xoot_, yoot_, doHyper=0): 
+def Model_RFOREST(X_, y_, Xoot_, yoot_, doHyper=0, merge_p_to_wdevoot=0): 
+    print("Model_RFOREST: ", st.session_state.AppState) 
     RF = None; RF_RESULTS_ = {}
     minleafsize = int(0.01*st.session_state.N_DEV)
     if doHyper == 1:
@@ -887,6 +998,9 @@ def Model_RFOREST(X_, y_, Xoot_, yoot_, doHyper=0):
             n_estimators=150, max_depth=10).fit(X_, y_) 
     p = RF.predict_proba(X_)
     poot = RF.predict_proba(Xoot_)
+    if merge_p_to_wdevoot == 1: 
+        update_wdevoot(p, poot, "RF")
+        RF_RESULTS_['AVP_N'], RF_RESULTS_['AVP_C'] = AvP_by_vgrps("RF")
     FEATIMP = pd.DataFrame([RF.feature_names_in_, RF.feature_importances_]).T
     FEATIMP.columns=["vname", "Importance"]
     ROC_DEV, ptdev, CM_DEV = get_metrics(y_,p,"dev","RF")
@@ -899,9 +1013,11 @@ def Model_RFOREST(X_, y_, Xoot_, yoot_, doHyper=0):
     RF_RESULTS_['ROC_OOT'] = ROC_OOT; RF_RESULTS_['CM_OOT'] = CM_OOT
     RF_RESULTS_['ptoot'] = ptoot
     RF_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
+    RF_RESULTS_['SENS'] = pd.DataFrame()
     return RF_RESULTS_
 
-def Model_GBM(X_, y_, Xoot_, yoot_, doHyper=0): 
+def Model_GBM(X_, y_, Xoot_, yoot_, doHyper=0, merge_p_to_wdevoot=0): 
+    print("Model_GBM: ", st.session_state.AppState) 
     GBM = None; GBM_RESULTS_ = {}
     X_train, X_test, y_train, y_test = train_test_split(
         X_, y_, test_size=.2, stratify=y_, random_state=0)
@@ -929,6 +1045,9 @@ def Model_GBM(X_, y_, Xoot_, yoot_, doHyper=0):
                 X_train, y_train)  
     p = GBM.predict_proba(X_)
     poot = GBM.predict_proba(Xoot_)
+    if merge_p_to_wdevoot == 1: 
+        update_wdevoot(p, poot, "GBM")
+        GBM_RESULTS_['AVP_N'], GBM_RESULTS_['AVP_C'] = AvP_by_vgrps("GBM")
     FEATIMP = pd.DataFrame([GBM.feature_names_in_, GBM.feature_importances_]).T
     FEATIMP.columns=["vname", "Importance"]
     ROC_DEV, ptdev, CM_DEV = get_metrics(y_,p,"dev","GBM")
@@ -941,9 +1060,11 @@ def Model_GBM(X_, y_, Xoot_, yoot_, doHyper=0):
     GBM_RESULTS_['ROC_OOT'] = ROC_OOT; GBM_RESULTS_['CM_OOT'] = CM_OOT
     GBM_RESULTS_['ptoot'] = ptoot
     GBM_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
+    GBM_RESULTS_['SENS'] = pd.DataFrame()
     return GBM_RESULTS_
 
-def Model_XGB(X_, y_, Xoot_, yoot_, doHyper=0): 
+def Model_XGB(X_, y_, Xoot_, yoot_, doHyper=0, merge_p_to_wdevoot=0): 
+    print("Model_XGB: ", st.session_state.AppState) 
     XGB = None; XGB_RESULTS_ = {}
     X_train, X_test, y_train, y_test = train_test_split(
         X_, y_, test_size=.2, stratify=y_, random_state=0)
@@ -967,6 +1088,9 @@ def Model_XGB(X_, y_, Xoot_, yoot_, doHyper=0):
                 X_train, y_train, eval_set=eval_set, early_stopping_rounds=50)  
     p = XGB.predict_proba(X_)
     poot = XGB.predict_proba(Xoot_)
+    if merge_p_to_wdevoot == 1: 
+        update_wdevoot(p, poot, "XGB")
+        XGB_RESULTS_['AVP_N'], XGB_RESULTS_['AVP_C'] = AvP_by_vgrps("XGB")
     # xgb.plot_importance(XGB) is absolute, not % based
     FEATIMP = pd.DataFrame([XGB.feature_names_in_, XGB.feature_importances_]).T
     FEATIMP.columns=["vname", "Importance"]
@@ -980,9 +1104,11 @@ def Model_XGB(X_, y_, Xoot_, yoot_, doHyper=0):
     XGB_RESULTS_['ROC_OOT'] = ROC_OOT; XGB_RESULTS_['CM_OOT'] = CM_OOT
     XGB_RESULTS_['ptoot'] = ptoot
     XGB_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
+    XGB_RESULTS_['SENS'] = pd.DataFrame()
     return XGB_RESULTS_
 
-def Model_MLP(X_, y_, Xoot_, yoot_, doHyper=0): 
+def Model_MLP(X_, y_, Xoot_, yoot_, doHyper=0, merge_p_to_wdevoot=0): 
+    print("Model_MLP: ", st.session_state.AppState) 
     MLP = None; MLP_RESULTS_ = {}
     X_train, X_test, y_train, y_test = train_test_split(
         X_, y_, test_size=.2, stratify=y_, random_state=0)
@@ -1007,6 +1133,9 @@ def Model_MLP(X_, y_, Xoot_, yoot_, doHyper=0):
             activation='identity').fit(X_train, y_train)  
     p = MLP.predict_proba(X_)
     poot = MLP.predict_proba(Xoot_)
+    if merge_p_to_wdevoot == 1: 
+        update_wdevoot(p, poot, "MLP")
+        MLP_RESULTS_['AVP_N'], MLP_RESULTS_['AVP_C'] = AvP_by_vgrps("MLP")
     ROC_DEV, ptdev, CM_DEV = get_metrics(y_,p,"dev","MLP")
     ROC_OOT, ptoot, CM_OOT = get_metrics(yoot_,poot,"oot","MLP")
     PARAMS = pd.DataFrame.from_dict(MLP.get_params(), orient='index') 
@@ -1016,9 +1145,11 @@ def Model_MLP(X_, y_, Xoot_, yoot_, doHyper=0):
     MLP_RESULTS_['ROC_OOT'] = ROC_OOT; MLP_RESULTS_['CM_OOT'] = CM_OOT
     MLP_RESULTS_['ptoot'] = ptoot
     MLP_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
+    MLP_RESULTS_['SENS'] = pd.DataFrame()
     return MLP_RESULTS_
 
-def Model_LGB(X_, y_, Xoot_, yoot_, doHyper=0): 
+def Model_LGB(X_, y_, Xoot_, yoot_, doHyper=0, merge_p_to_wdevoot=0): 
+    print("Model_LGB: ", st.session_state.AppState) 
     LGB = None; LGB_RESULTS_ = {}
     X_train, X_test, y_train, y_test = train_test_split(
         X_, y_, test_size=.2, stratify=y_, random_state=0)
@@ -1047,6 +1178,9 @@ def Model_LGB(X_, y_, Xoot_, yoot_, doHyper=0):
                 X_train, y_train, eval_set=eval_set)  
     p = LGB.predict_proba(X_)
     poot = LGB.predict_proba(Xoot_)
+    if merge_p_to_wdevoot == 1: 
+        update_wdevoot(p, poot, "LGB")
+        LGB_RESULTS_['AVP_N'], LGB_RESULTS_['AVP_C'] = AvP_by_vgrps("LGB")
     #st.pyplot(lgb.plot_importance(LGB).figure)
     FEATIMP = pd.DataFrame([LGB.feature_name_, LGB.feature_importances_]).T
     FEATIMP.columns=["vname", "Importance"]
@@ -1060,8 +1194,257 @@ def Model_LGB(X_, y_, Xoot_, yoot_, doHyper=0):
     LGB_RESULTS_['ROC_OOT'] = ROC_OOT; LGB_RESULTS_['CM_OOT'] = CM_OOT
     LGB_RESULTS_['ptoot'] = ptoot
     LGB_RESULTS_['Rankp'] = Rank_p(y_, p, yoot_, poot)
+    LGB_RESULTS_['SENS'] = pd.DataFrame()
     return LGB_RESULTS_
 
+def Sens_helper(DFdev, DFoot, sdev, soot):
+    sdev['AUC_mdl'] = DFdev['AUC'].item()
+    sdev['AUC%'] = (
+        sdev['AUC'] - sdev['AUC_mdl']) / sdev['AUC_mdl']
+    sdev['KS_mdl'] = DFdev['KS'].item()
+    sdev['KS%'] = (
+        sdev['KS'] - sdev['KS_mdl']) / sdev['KS_mdl']
+    sdev['GINI_mdl'] = DFdev['GINI'].item()
+    sdev['GINI%'] = (
+        sdev['GINI'] - sdev['GINI_mdl']) / sdev['GINI_mdl']
+    soot['AUC_mdl'] = DFoot['AUC'].item()
+    soot['AUC%'] = (
+        soot['AUC'] - soot['AUC_mdl']) / soot['AUC_mdl']
+    soot['KS_mdl'] = DFoot['KS'].item()
+    soot['KS%'] = (
+        soot['KS'] - soot['KS_mdl']) / soot['KS_mdl']
+    soot['GINI_mdl'] = DFoot['GINI'].item()
+    soot['GINI%'] = (
+        soot['GINI'] - soot['GINI_mdl']) / soot['GINI_mdl']
+    keepers = ['DS', 'vname', 'AUC_mdl', 'AUC', 'AUC%', 
+               'KS_mdl', 'KS', 'KS%', 'GINI_mdl', 'GINI', 'GINI%']
+    return pd.concat([sdev[keepers], soot[keepers]], ignore_index=True) 
+
+def Sensitivity(mdl):
+    print("Sensitivity: ", st.session_state.AppState)
+    DV = st.session_state.DV
+    VLISTF_N = st.session_state.VLISTF_N
+    VLISTF_C = st.session_state.VLISTF_C
+    wDEV = st.session_state.wDEV
+    wOOT = st.session_state.wOOT
+    X = wDEV[[v for v in wDEV.columns if v in (VLISTF_N + VLISTF_C)]]
+    Xoot = wOOT[[v for v in wOOT.columns if v in (VLISTF_N + VLISTF_C)]]
+    y = wDEV[[DV]].values.ravel()
+    yoot = wOOT[[DV]].values.ravel()
+    Sens_dev = pd.DataFrame(); Sens_oot = pd.DataFrame()
+    if mdl == "LR":
+        LR_RESULTS = st.session_state.LR_RESULTS
+        vlist = LR_RESULTS['PARAMS']['vname'].tolist()
+        vlist.remove("Intercept")
+        for vdrop in vlist:
+            X_ = X[[v for v in vlist]].drop([vdrop], axis=1)
+            Xoot_ = Xoot[[v for v in vlist]].drop([vdrop], axis=1)
+            temp = Model_LOGISTIC(X_, y, Xoot_, yoot)
+            temp['CM_DEV']['vname'] = vdrop; temp['CM_OOT']['vname'] = vdrop
+            Sens_dev = pd.concat([Sens_dev, temp['CM_DEV']], ignore_index=True)
+            Sens_oot = pd.concat([Sens_oot, temp['CM_OOT']], ignore_index=True) 
+        st.session_state.LR_RESULTS['SENS'] = Sens_helper(
+            LR_RESULTS['CM_DEV'], LR_RESULTS['CM_OOT'], Sens_dev, Sens_oot)
+    elif mdl == "DT":
+        DT_RESULTS = st.session_state.DT_RESULTS
+        vlist = DT_RESULTS['FEATIMP']['vname'].tolist()
+        for vdrop in vlist:
+            X_ = X[[v for v in vlist]].drop([vdrop], axis=1)
+            Xoot_ = Xoot[[v for v in vlist]].drop([vdrop], axis=1)
+            temp = Model_DTREE(X_, y, Xoot_, yoot)
+            temp['CM_DEV']['vname'] = vdrop; temp['CM_OOT']['vname'] = vdrop
+            Sens_dev = pd.concat([Sens_dev, temp['CM_DEV']], ignore_index=True)
+            Sens_oot = pd.concat([Sens_oot, temp['CM_OOT']], ignore_index=True) 
+        st.session_state.DT_RESULTS['SENS'] = Sens_helper(
+            DT_RESULTS['CM_DEV'], DT_RESULTS['CM_OOT'], Sens_dev, Sens_oot)
+    elif mdl == "RF":
+        RF_RESULTS = st.session_state.RF_RESULTS
+        vlist = RF_RESULTS['FEATIMP']['vname'].tolist()
+        for vdrop in vlist:
+            X_ = X[[v for v in vlist]].drop([vdrop], axis=1)
+            Xoot_ = Xoot[[v for v in vlist]].drop([vdrop], axis=1)
+            temp = Model_RFOREST(X_, y, Xoot_, yoot)
+            temp['CM_DEV']['vname'] = vdrop; temp['CM_OOT']['vname'] = vdrop
+            Sens_dev = pd.concat([Sens_dev, temp['CM_DEV']], ignore_index=True)
+            Sens_oot = pd.concat([Sens_oot, temp['CM_OOT']], ignore_index=True) 
+        st.session_state.RF_RESULTS['SENS'] = Sens_helper(
+            RF_RESULTS['CM_DEV'], RF_RESULTS['CM_OOT'], Sens_dev, Sens_oot)
+    elif mdl == "GBM":
+        GBM_RESULTS = st.session_state.GBM_RESULTS
+        vlist = GBM_RESULTS['FEATIMP']['vname'].tolist()
+        for vdrop in vlist:
+            X_ = X[[v for v in vlist]].drop([vdrop], axis=1)
+            Xoot_ = Xoot[[v for v in vlist]].drop([vdrop], axis=1)
+            temp = Model_GBM(X_, y, Xoot_, yoot)
+            temp['CM_DEV']['vname'] = vdrop; temp['CM_OOT']['vname'] = vdrop
+            Sens_dev = pd.concat([Sens_dev, temp['CM_DEV']], ignore_index=True)
+            Sens_oot = pd.concat([Sens_oot, temp['CM_OOT']], ignore_index=True) 
+        st.session_state.GBM_RESULTS['SENS'] = Sens_helper(
+            GBM_RESULTS['CM_DEV'], GBM_RESULTS['CM_OOT'], Sens_dev, Sens_oot)
+    elif mdl == "XGB":
+        XGB_RESULTS = st.session_state.XGB_RESULTS
+        vlist = XGB_RESULTS['FEATIMP']['vname'].tolist()
+        for vdrop in vlist:
+            X_ = X[[v for v in vlist]].drop([vdrop], axis=1)
+            Xoot_ = Xoot[[v for v in vlist]].drop([vdrop], axis=1)
+            temp = Model_XGB(X_, y, Xoot_, yoot)
+            temp['CM_DEV']['vname'] = vdrop; temp['CM_OOT']['vname'] = vdrop
+            Sens_dev = pd.concat([Sens_dev, temp['CM_DEV']], ignore_index=True)
+            Sens_oot = pd.concat([Sens_oot, temp['CM_OOT']], ignore_index=True) 
+        st.session_state.XGB_RESULTS['SENS'] = Sens_helper(
+            XGB_RESULTS['CM_DEV'], XGB_RESULTS['CM_OOT'], Sens_dev, Sens_oot)
+    elif mdl == "MLPNN":
+        MLP_RESULTS = st.session_state.MLP_RESULTS
+        vlist = VLISTF_N + VLISTF_C
+        for vdrop in vlist:
+            X_ = X[[v for v in vlist]].drop([vdrop], axis=1)
+            Xoot_ = Xoot[[v for v in vlist]].drop([vdrop], axis=1)
+            temp = Model_MLP(X_, y, Xoot_, yoot)
+            temp['CM_DEV']['vname'] = vdrop; temp['CM_OOT']['vname'] = vdrop
+            Sens_dev = pd.concat([Sens_dev, temp['CM_DEV']], ignore_index=True)
+            Sens_oot = pd.concat([Sens_oot, temp['CM_OOT']], ignore_index=True) 
+        st.session_state.MLP_RESULTS['SENS'] = Sens_helper(
+            MLP_RESULTS['CM_DEV'], MLP_RESULTS['CM_OOT'], Sens_dev, Sens_oot)
+    elif mdl == "LGB":
+        LGB_RESULTS = st.session_state.LGB_RESULTS
+        vlist = VLISTF_N + VLISTF_C
+        for vdrop in vlist:
+            X_ = X[[v for v in vlist]].drop([vdrop], axis=1)
+            Xoot_ = Xoot[[v for v in vlist]].drop([vdrop], axis=1)
+            temp = Model_LGB(X_, y, Xoot_, yoot)
+            temp['CM_DEV']['vname'] = vdrop; temp['CM_OOT']['vname'] = vdrop
+            Sens_dev = pd.concat([Sens_dev, temp['CM_DEV']], ignore_index=True)
+            Sens_oot = pd.concat([Sens_oot, temp['CM_OOT']], ignore_index=True) 
+        st.session_state.LGB_RESULTS['SENS'] = Sens_helper(
+            LGB_RESULTS['CM_DEV'], LGB_RESULTS['CM_OOT'], Sens_dev, Sens_oot)
+    else: print(" ")
+
+def AvP_by_vgrps(mdl):
+    print("AvP_by_vgrps: ", st.session_state.AppState)
+    DV = st.session_state.DV
+    VLISTF_N = st.session_state.VLISTF_N
+    VLISTF_C = st.session_state.VLISTF_C
+    NLEVELS_TBL = st.session_state.NLEVELS_TBL
+    N_WOE = st.session_state.N_WOE
+    C_WOE = st.session_state.C_WOE
+    wDEV = st.session_state.wDEV
+    wOOT = st.session_state.wOOT
+    misslist = NLEVELS_TBL[NLEVELS_TBL['misspct']!=0]['vname'].tolist()
+    avp_n = pd.DataFrame(); avp_c = pd.DataFrame()
+    if len(VLISTF_N) != 0:
+        for v in VLISTF_N:
+            grps = N_WOE[v][['bin','min','max']]
+            grps['range'] = grps["min"].astype(str) +" <-> " + grps["max"].astype(str)
+            if v in misslist:
+                dev = wDEV[[DV,f'n{v}',f'p_{mdl}']].rename(
+                    columns={f'n{v}':v, f'p_{mdl}':'p'})
+                oot = wOOT[[DV,f'n{v}',f'p_{mdl}']].rename(
+                    columns={f'n{v}':v, f'p_{mdl}':'p'})
+            else:
+                dev = wDEV[[DV,v,f'p_{mdl}']].rename(columns={f'p_{mdl}':'p'})
+                oot = wOOT[[DV,v,f'p_{mdl}']].rename(columns={f'p_{mdl}':'p'})
+            cnt = grps['bin'].count()
+            def applybins(x_):
+                if x_ == None or math.isnan(x_) or np.isnan(x_) or pd.isna(x_): 
+                    return grps.loc[cnt-1,'bin']
+                for r in range(cnt):
+                    if x_ <= grps.loc[r,'max']: return grps.loc[r,'bin']
+                return grps.loc[cnt-1,'bin']
+            dev['bin'] = dev[v].apply(lambda x: applybins(x))
+            oot['bin'] = oot[v].apply(lambda x: applybins(x))
+            dev2 = dev.groupby(['bin'], as_index=False).agg(
+                N_dev=(DV,'count'), Nb_dev=(DV,'sum'), 
+                br_dev=(DV,'mean'), p_dev=('p','mean'))
+            dev2['Npct_dev'] = dev2['N_dev'] / st.session_state.N_DEV   
+            dev2 = dev2.merge(grps[['bin','range']], left_on='bin', right_on='bin')
+            dev2['vname'] = v 
+            oot2 = oot.groupby(['bin'], as_index=False).agg(
+                N_oot=(DV,'count'), Nb_oot=(DV,'sum'), 
+                br_oot=(DV,'mean'), p_oot=('p','mean'))
+            oot2['Npct_oot'] = oot2['N_oot'] / st.session_state.N_OOT        
+            devoot = dev2.merge(
+                oot2[['bin','N_oot','Nb_oot','Npct_oot','br_oot','p_oot']], 
+                left_on='bin', right_on='bin') 
+            avp_n = pd.concat([avp_n, devoot], ignore_index=True)
+    if len(VLISTF_C) != 0:
+        for v in VLISTF_C:
+            grps = C_WOE[v][['bin','grp']].rename(columns={"grp":v})
+            dev = wDEV[[DV,f'c{v}',f'p_{mdl}']].rename(
+                columns={f'c{v}':v, f'p_{mdl}':'p'})
+            dev = dev.merge(grps, left_on=v, right_on=v) 
+            dev2 = dev.groupby(['bin',v], as_index=False).agg(
+                N_dev=(DV,'count'), Nb_dev=(DV,'sum'), 
+                br_dev=(DV,'mean'), p_dev=('p','mean'))
+            dev2['Npct_dev'] = dev2['N_dev'] / st.session_state.N_DEV
+            dev2['vname'] = v
+            oot = wOOT[[DV,f'c{v}',f'p_{mdl}']].rename(
+                columns={f'c{v}':v, f'p_{mdl}':'p'})
+            oot = oot.merge(grps, left_on=v, right_on=v) 
+            oot2 = oot.groupby(['bin',v], as_index=False).agg(
+                N_oot=(DV,'count'), Nb_oot=(DV,'sum'), 
+                br_oot=(DV,'mean'), p_oot=('p','mean'))
+            oot2['Npct_oot'] = oot2['N_oot'] / st.session_state.N_OOT            
+            devoot = dev2.merge(
+                oot2[[v,'N_oot','Nb_oot','Npct_oot','br_oot','p_oot']], 
+                left_on=v, right_on=v) 
+            devoot.rename(columns={v:'range'}, inplace=True)
+            avp_c = pd.concat([avp_c, devoot], ignore_index=True)
+    return avp_n, avp_c
+
+def AvP_by_vgrps_layout(v, avp_n_, avp_c_):
+    print("AvP_by_vgrps_layout: ", st.session_state.AppState)
+    if v != None:
+        if v in st.session_state.VLISTF_N:
+            df = avp_n_[avp_n_['vname'] == v]
+        else: df = avp_c_[avp_c_['vname'] == v]
+        # Chart
+        ranges = map(str,df['range'].tolist())
+        datasrc = ['DEV', 'OOT']
+        x = [(range, src) for range in ranges for src in datasrc]
+        fig = figure(
+            x_range=FactorRange(*x), title='AvP Chart',
+            x_axis_label='range', y_axis_label='Npct', 
+            plot_height=500, plot_width=750)
+        counts = sum(zip(df['Npct_dev'], df['Npct_oot']), ()) 
+        source = ColumnDataSource(data=dict(x=x, counts=counts))
+        fig.vbar(fill_alpha=.5,
+            x='x', top='counts', width=0.9, source=source, line_color="white",
+            fill_color=factor_cmap(
+                'x', palette=['blue','red'], factors=datasrc, start=1, end=2))
+        fig.legend.location = "bottom_right"
+        minbr = min(df["br_dev"].min().item(), df["br_oot"].min().item(),
+                    df["p_dev"].min().item(), df["p_oot"].min().item())
+        maxbr = max(df["br_dev"].max().item(), df["br_oot"].max().item(),
+                    df["p_dev"].max().item(), df["p_oot"].max().item())
+        minmaxdiff = maxbr - minbr
+        fig.extra_y_ranges['Second'] = Range1d(
+            start=max(0.0,minbr-.1*minmaxdiff), 
+            end=min(1.0,maxbr+.1*minmaxdiff))
+        fig.add_layout(LinearAxis(y_range_name='Second'), "right")
+        fig.line(
+            df["range"], df["br_dev"], legend_label="bad-rate [DEV]", 
+            line_width=2, y_range_name="Second", color="blue", alpha=.75)
+        fig.circle(df["range"], df["br_dev"], y_range_name="Second", size=5, 
+                 fill_color="blue") # only for markers
+        fig.line(
+            df["range"], df["br_oot"], legend_label="bad-rate [OOT]", 
+            line_width=2, y_range_name="Second", color="red", alpha=.75)
+        fig.circle(df["range"], df["br_oot"], y_range_name="Second", size=5, 
+                 fill_color="red") # only for markers
+        fig.line(
+            df["range"], df["p_dev"], legend_label="predicted [DEV]", 
+            line_width=2, y_range_name="Second", color="blue", 
+            line_dash='dashed')
+        fig.circle(df["range"], df["p_dev"], y_range_name="Second", size=5, 
+                 fill_color="blue") # only for markers
+        fig.line(
+            df["range"], df["p_oot"], legend_label="predicted [OOT]", 
+            line_width=2, y_range_name="Second", color="red",
+            line_dash='dashed')
+        fig.circle(df["range"], df["p_oot"], y_range_name="Second", size=5, 
+                 fill_color="red") # only for markers
+        fig.xaxis.major_label_orientation = math.pi/4
+        st.bokeh_chart(fig, use_container_width=True)
 
 @tictoc
 def Oracle():
@@ -1071,47 +1454,54 @@ def Oracle():
     VLISTF_C = st.session_state.VLISTF_C
     wDEV = st.session_state.wDEV
     wOOT = st.session_state.wOOT
-    CLUSTER = st.session_state.CLUSTER
     X = wDEV[[v for v in wDEV.columns if v in (VLISTF_N + VLISTF_C)]]
     Xoot = wOOT[[v for v in wOOT.columns if v in (VLISTF_N + VLISTF_C)]]
     y = wDEV[[DV]].values.ravel()
     yoot = wOOT[[DV]].values.ravel()
     if st.session_state.AppState == "Cluster_Complete":  
         LR_RESULTS = {}
-        LR_RESULTS = Model_LOGISTIC(X, y, Xoot, yoot) 
+        LR_RESULTS = Model_LOGISTIC(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
+        LR_RESULTS['SENS'] = pd.DataFrame()
         st.session_state.LR_RESULTS = LR_RESULTS
         iLR_RESULTS = {}
         Xi, Xioot = Add_Interactions_LR(X, y, Xoot)
-        iLR_RESULTS = Model_LOGISTIC(Xi, y, Xioot, yoot) 
+        iLR_RESULTS = Model_LOGISTIC(Xi, y, Xioot, yoot)
+        iLR_RESULTS['SENS'] = pd.DataFrame() 
         st.session_state.iLR_RESULTS = iLR_RESULTS
-    if st.session_state.ALT_MDLS != None:
-        if "D-Tree" in st.session_state.ALT_MDLS:
+    Altmdls = st.session_state.ALT_MDLS
+    if Altmdls != None:
+        if "D-Tree" in Altmdls and st.session_state.DT_RESULTS == None:
             DT_RESULTS = {}      
-            DT_RESULTS = Model_DTREE(X, y, Xoot, yoot)  
+            DT_RESULTS = Model_DTREE(X, y, Xoot, yoot, merge_p_to_wdevoot=1)  
+            DT_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.DT_RESULTS = DT_RESULTS 
-        if "Random Forest" in st.session_state.ALT_MDLS:
+        if "Random Forest" in Altmdls and st.session_state.RF_RESULTS == None:
             RF_RESULTS = {}  
-            RF_RESULTS = Model_RFOREST(X, y, Xoot, yoot) 
+            RF_RESULTS = Model_RFOREST(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
+            RF_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.RF_RESULTS = RF_RESULTS
-        if "GBM" in st.session_state.ALT_MDLS:
+        if "GBM" in Altmdls and st.session_state.GBM_RESULTS == None:
             GBM_RESULTS = {}
-            GBM_RESULTS = Model_GBM(X, y, Xoot, yoot) 
+            GBM_RESULTS = Model_GBM(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
+            GBM_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.GBM_RESULTS = GBM_RESULTS
-        if "XGB" in st.session_state.ALT_MDLS:
+        if "XGB" in Altmdls and st.session_state.XGB_RESULTS == None:
             XGB_RESULTS = {}
-            XGB_RESULTS = Model_XGB(X, y, Xoot, yoot) 
+            XGB_RESULTS = Model_XGB(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
+            XGB_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.XGB_RESULTS = XGB_RESULTS
-        if "MLP-NN" in st.session_state.ALT_MDLS:
+        if "MLP-NN" in Altmdls and st.session_state.MLP_RESULTS == None:
             MLP_RESULTS = {}
-            MLP_RESULTS = Model_MLP(X, y, Xoot, yoot) 
+            MLP_RESULTS = Model_MLP(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
+            MLP_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.MLP_RESULTS = MLP_RESULTS
-        if "LGB" in st.session_state.ALT_MDLS:
+        if "LGB" in Altmdls and st.session_state.LGB_RESULTS == None:
             LGB_RESULTS = {}
-            LGB_RESULTS = Model_LGB(X, y, Xoot, yoot) 
+            LGB_RESULTS = Model_LGB(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
+            LGB_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.LGB_RESULTS = LGB_RESULTS
 
-    
-def Oracle_Layout_assist(DF, mdltyp):
+def Oracle_Layout_assist(DF, mdl, mdltyp):
     ROC_DEV = DF['ROC_DEV']; ROC_OOT = DF['ROC_OOT']
     ptdev = DF['ptdev']; ptoot = DF['ptoot']
     Rankp = DF['Rankp']
@@ -1125,6 +1515,10 @@ def Oracle_Layout_assist(DF, mdltyp):
         if mdltyp != "MLP-NN":
             col2.write(DF['FEATIMP'].sort_values(by='Importance', ascending=False))
     st.write(pd.concat([DF['CM_DEV'], DF['CM_OOT']], ignore_index=True)) 
+    # Sensitivity btn
+    st.button("Sensitivity Analysis", key=f'{mdl}_V_BTN', on_click=Sensitivity, 
+        args=[mdl], type="secondary", 
+        disabled=False, use_container_width=False)
     if mdltyp == "DECISION TREE": st.graphviz_chart(export_graphviz(DF['DT']))
     # Decile chart
     deciles = map(str,Rankp['decile'].tolist())
@@ -1139,7 +1533,7 @@ def Oracle_Layout_assist(DF, mdltyp):
              fill_color=factor_cmap(
                  'x', palette=['blue','red'], factors=datasrc, start=1, end=2))
     fig.legend.location = "bottom_right"
-    st.bokeh_chart(fig, use_container_width=False) 
+    st.bokeh_chart(fig, use_container_width=True) 
     # ROC chart
     fig2 = figure(title='ROC', x_axis_label='fpr', y_axis_label='tpr', 
                   plot_height=500, plot_width=500)
@@ -1150,7 +1544,17 @@ def Oracle_Layout_assist(DF, mdltyp):
     fig2.line(ROC_DEV['fpr'], ROC_DEV['fpr'], line_width=2, color="black",
               legend_label='', line_dash='dashed')
     fig2.legend.location = "bottom_right"
-    st.bokeh_chart(fig2, use_container_width=False)
+    st.bokeh_chart(fig2, use_container_width=True)
+    # AvP
+    if mdltyp != "LOGISTIC REGRESSION - interact":
+        vlist = st.session_state.VLISTF_N + st.session_state.VLISTF_C
+        VarSelect = st.selectbox(
+            'Actual vs Predicted', vlist, index=None, 
+            placeholder="Select Variable...", key=f'selboxvar_{mdl}') 
+        AvP_by_vgrps_layout(VarSelect, DF['AVP_N'], DF['AVP_C'])
+    # Sensitivity
+        st.markdown('''Sensitivity Table''')
+        st.write(DF['SENS'])
 
 @tictoc
 def Oracle_Layout():
@@ -1166,32 +1570,33 @@ def Oracle_Layout():
     choices = st.session_state.ALT_MDLS
     with st.expander("LOGISTIC REGRESSION", expanded=False):
         if st.session_state.AppState == "Oracle_Complete":
-            Oracle_Layout_assist(LR_RESULTS, "LOGISTIC REGRESSION")
+            Oracle_Layout_assist(LR_RESULTS, "LR", "LOGISTIC REGRESSION")
     # LR Interaction Toggle button
     st.session_state.interact = st.toggle(
         "Interactions", value=False, key="interacttoggle")
     with st.expander("LOGISTIC REGRESSION - interact", expanded=False):
         if st.session_state.AppState == "Oracle_Complete" and st.session_state.interact == True:
-            Oracle_Layout_assist(iLR_RESULTS, "LOGISTIC REGRESSION - interact")
+            Oracle_Layout_assist(iLR_RESULTS, "iLR", 
+                                 "LOGISTIC REGRESSION - interact")
     if choices != None:
         with st.expander("DECISION TREE", expanded=False):
             if "D-Tree" in choices and DT_RESULTS != None:
-                Oracle_Layout_assist(DT_RESULTS, "DECISION TREE")
+                Oracle_Layout_assist(DT_RESULTS, "DT", "DECISION TREE")
         with st.expander("RANDOM FOREST", expanded=False):
             if "Random Forest" in choices and RF_RESULTS != None:
-                Oracle_Layout_assist(RF_RESULTS, "RANDOM FOREST")
+                Oracle_Layout_assist(RF_RESULTS, "RF", "RANDOM FOREST")
         with st.expander("GRADIENT BOOST", expanded=False):
             if "GBM" in choices and GBM_RESULTS != None:
-                Oracle_Layout_assist(GBM_RESULTS, "GRADIENT BOOST")
+                Oracle_Layout_assist(GBM_RESULTS, "GBM", "GRADIENT BOOST")
         with st.expander("XG BOOST", expanded=False):
             if "XGB" in choices and XGB_RESULTS != None:
-                Oracle_Layout_assist(XGB_RESULTS, "XG BOOST")
+                Oracle_Layout_assist(XGB_RESULTS, "XGB", "XG BOOST")
         with st.expander("NEURAL NETWORK", expanded=False):
             if "MLP-NN" in choices and MLP_RESULTS != None:
-                Oracle_Layout_assist(MLP_RESULTS, "MLP-NN")
+                Oracle_Layout_assist(MLP_RESULTS, "MLPNN","MLP-NN")
         with st.expander("LIGHT G BOOST", expanded=False):
             if "LGB" in choices and LGB_RESULTS != None:
-                Oracle_Layout_assist(LGB_RESULTS, "LGB")
+                Oracle_Layout_assist(LGB_RESULTS, "LGB", "LGB")
 
 ##################################################################################
 ##################################################################################
@@ -1240,9 +1645,13 @@ def Initialize():
     if "wOOT" not in st.session_state: st.session_state.wOOT=None
     if "PSI" not in st.session_state: st.session_state.PSI=None
     if "CORRMAT" not in st.session_state: st.session_state.CORRMAT=None
-    if "CORRIV" not in st.session_state: st.session_state.CORRIV=None
+    if "IVCORR" not in st.session_state: st.session_state.IVCORR=None
+    if "DVCORR" not in st.session_state: st.session_state.DVCORR=None
+    if "SFA" not in st.session_state: st.session_state.SFA=None
     if "CLUSTER" not in st.session_state: st.session_state.CLUSTER=None
     if "ALT_MDLS" not in st.session_state: st.session_state.ALT_MDLS=None
+    if "ExcludeVars" not in st.session_state: st.session_state.ExcludeVars=None
+    if "excl_flag" not in st.session_state: st.session_state.excl_flag=None
     if "LR_RESULTS" not in st.session_state: st.session_state.LR_RESULTS=None
     if "IMAP" not in st.session_state: st.session_state.IMAP=None
     if "iLR_RESULTS" not in st.session_state: st.session_state.iLR_RESULTS=None
@@ -1254,7 +1663,6 @@ def Initialize():
     if "LGB_RESULTS" not in st.session_state: st.session_state.LGB_RESULTS=None
 
 
-    
 if "AppState" not in st.session_state: st.session_state.AppState="Initial"
 def setAppState(x): st.session_state.AppState = x
 #if st.session_state.AppState == 0: st.button('Step 1', on_click=setAppState, args=[1])
@@ -1266,9 +1674,8 @@ st.set_page_config(layout="wide")
 st.header("OMNI STATION", divider='grey')
 st.sidebar.header("Controller")
 
-Apptab1, Apptab2, Apptab3, Apptab4, Apptab5, Apptab6, Apptab7, Apptab8 = st.tabs(
-    ["General Summary","EDA","Corr & Cluster","Oracle","Charts","Widgts",
-     "StateStatus","Debug"])
+Apptab1, Apptab2, Apptab3, Apptab4, Apptab7, Apptab8 = st.tabs(
+    ["General Summary","EDA","Corr & Cluster","Oracle","StateStatus","Debug"])
 
 display_Sidebar()
 
@@ -1308,20 +1715,25 @@ with Apptab2:
 with Apptab3:
     if st.session_state.AppState=="EDA_Complete":
         CORR()
+        SFA()
         Cluster()
         setAppState("Cluster_Complete")
     if st.session_state.AppState not in earlyappstates:
         c = st.container(border=True)
+        with c.expander("SFA Table", expanded=False):    
+            st.write(st.session_state.SFA) 
         with c.expander("Correlation Matrix", expanded=False):
             st.write(st.session_state.CORRMAT)
         col1, col2 = c.columns(2)
         with col1:
-            st.markdown('''Spearman Correlation''')
-            st.write(st.session_state.CORRIV)
+            st.markdown('''Spearman Correlation (with DV)''')
+            st.write(st.session_state.DVCORR)
         with col2:
-            st.markdown('''Cluster Table''')
-            st.write(st.session_state.CLUSTER)           
-
+            st.markdown('''Spearman Correlation (between variables)''')
+            st.write(st.session_state.IVCORR)
+        c.markdown('''Cluster Table''')
+        c.write(st.session_state.CLUSTER)  
+        
 with Apptab4:
     if st.session_state.AppState=="Cluster_Complete":
         Oracle()
@@ -1335,8 +1747,10 @@ with Apptab4:
             ["D-Tree", "Random Forest", "GBM", "XGB", "MLP-NN", "LGB"], 
             default=None, key="AltMdlSelect", placeholder="Choose an option",
             on_change=update_altmdls())
-        if update_mdls == 1: Oracle(); update_mdls = 0
+        if update_mdls == 1: 
+            Oracle(); update_mdls = 0
         Oracle_Layout()
+
 
 #with Apptab5:
 #    display_SessionStatus()
@@ -1350,55 +1764,6 @@ with Apptab4:
         
 with Apptab7:
     st.write(st.session_state)
-
-    plt.rcParams["figure.figsize"] = [7.50, 3.50]
-    plt.rcParams["figure.autolayout"] = True
-    df = pd.DataFrame(dict(data=[2, 4, 1, 5, 9, 6, 0, 7]))
-    fig, ax = plt.subplots()
-    df['data'].plot(kind='bar', color='red')
-    df['data'].plot(kind='line', marker='*', color='black', ms=10)
-    st.pyplot(fig)
-
-    p2 = figure(title='simple circle example', 
-                x_axis_label='x', y_axis_label='y', plot_width = 400, plot_height = 400) 
-    p2.circle([1, 2, 3, 4, 5], [4, 7, 1, 6, 3], size=10, color="navy", alpha=0.5) 
-    st.bokeh_chart(p2, use_container_width=True)
-
-    p3 = figure(title='simple line example', 
-                x_axis_label='x', y_axis_label='y', plot_width = 400, plot_height = 400) 
-    p3.line([1, 2, 3, 4, 5], [3, 1, 2, 6, 5],  legend_label='Trend',
-            line_width = 2, color = "green") 
-    st.bokeh_chart(p3, use_container_width=True)
-
-    p3a = figure(title='simple scatter example', 
-                x_axis_label='x', y_axis_label='y', plot_width = 400, plot_height = 400) 
-    p3a.scatter([5,3,8,6,4], [3, 1, 2, 6, 5],  legend_label='Trend',
-            color = "red") 
-    st.bokeh_chart(p3a, use_container_width=True)
-
-    p4 = figure(title='simple vbar example', 
-                x_axis_label='x', y_axis_label='y', plot_width = 300, plot_height = 300) 
-    p4.vbar([1, 2, 3, 4, 5], top=[3, 1, 2, 6, 5], width=.5, color = "blue") 
-    st.bokeh_chart(p4, use_container_width=True)
-
-    p5 = figure(title='line + bar example', 
-                x_axis_label='x', y_axis_label='y', plot_width = 300, plot_height = 300) 
-    p5.vbar([1, 2, 3, 4, 5], top=[3, 1, 2, 6, 5], width=.5, color = "blue") 
-    p5.line([1, 2, 3, 4, 5], [3, 1, 2, 6, 5],  line_width = 2, color = "red") 
-    st.bokeh_chart(p5, use_container_width=True)
-
-    x_column = "x"; y_column1 = "y1"; y_column2 = "y2"
-    df = pd.DataFrame()
-    df[x_column] = range(0, 100)
-    df[y_column1] = np.linspace(100, 1000, 100)
-    df[y_column2] = np.linspace(1, 2, 100)
-    p = figure()
-    p.line(df[x_column], df[y_column1], legend_label=y_column1, line_width=1, color="blue")
-    p.extra_y_ranges['Second Axis'] = Range1d(start=1, end=2)
-    p.add_layout(LinearAxis(y_range_name='Second Axis'), "right")
-    p.line(df[x_column], df[y_column2], legend_label=y_column2, line_width=1, 
-           y_range_name="Second Axis", color="green")
-    st.bokeh_chart(p, use_container_width=True)
 
 with Apptab8:
     if st.session_state.DEBUGON == True and st.session_state.AppState != "Initial": 
@@ -1434,12 +1799,15 @@ with Apptab8:
         st.write("wOOT" , st.session_state.wOOT)
         st.write("PSI" , st.session_state.PSI)
         st.write("CORRMAT" , st.session_state.CORRMAT)
-        st.write("CORRIV" , st.session_state.CORRIV)
+        st.write("IVCORR" , st.session_state.IVCORR)
+        st.write("DVCORR" , st.session_state.DVCORR)
+        st.write("SFA", st.session_state.SFA)
         st.write("CLUSTER" , st.session_state.CLUSTER)
         st.write("ALT_MDLS" , st.session_state.ALT_MDLS)
-        #st.write("LR_RESULTS" , st.session_state.LR_RESULTS)
-        #st.write("iLR_RESULTS" , st.session_state.iLR_RESULTS)   
+        st.write("ExcludeVars" , st.session_state.ExcludeVars)
         st.write("IMAP" , st.session_state.IMAP)
+        st.write("LR_RESULTS" , st.session_state.LR_RESULTS)
+        #st.write("iLR_RESULTS" , st.session_state.iLR_RESULTS)   
         #st.write("DT_RESULTS" , st.session_state.DT_RESULTS)
         #st.write("RF_RESULTS" , st.session_state.RF_RESULTS)
         #st.write("GBM_RESULTS" , st.session_state.GBM_RESULTS)
@@ -1449,10 +1817,11 @@ with Apptab8:
 
 
 # TODO
-# Deploy
-# Add Interaction func to create top interac vars
+# Validation: avg var [DEV/OOT] by p deciles
+        
 # Consider HalvingRandomSearchCV
 #y_scores = cross_val_predict(sgd_clf, X_train, y_train_5, cv=3, method="decision_function")
+
 
 #params = {
 #    "colsample_bytree": uniform(0.7, 0.3),
