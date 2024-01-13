@@ -16,6 +16,7 @@ import time, os
 import altair as alt
 from vega_datasets import data
 from bokeh.plotting import figure
+from bokeh.models import LinearAxis, Range1d
 from functions import *
 
 
@@ -298,3 +299,53 @@ def display_Widgets():
         if chosen=="Gryffindor": c2.write("yay")
         else: c2.write("not yay")
 
+
+def random_charts():
+    plt.rcParams["figure.figsize"] = [7.50, 3.50]
+    plt.rcParams["figure.autolayout"] = True
+    df = pd.DataFrame(dict(data=[2, 4, 1, 5, 9, 6, 0, 7]))
+    fig, ax = plt.subplots()
+    df['data'].plot(kind='bar', color='red')
+    df['data'].plot(kind='line', marker='*', color='black', ms=10)
+    st.pyplot(fig)
+
+    p2 = figure(title='simple circle example', 
+                x_axis_label='x', y_axis_label='y', plot_width = 400, plot_height = 400) 
+    p2.circle([1, 2, 3, 4, 5], [4, 7, 1, 6, 3], size=10, color="navy", alpha=0.5) 
+    st.bokeh_chart(p2, use_container_width=True)
+
+    p3 = figure(title='simple line example', 
+                x_axis_label='x', y_axis_label='y', plot_width = 400, plot_height = 400) 
+    p3.line([1, 2, 3, 4, 5], [3, 1, 2, 6, 5],  legend_label='Trend',
+            line_width = 2, color = "green") 
+    st.bokeh_chart(p3, use_container_width=True)
+
+    p3a = figure(title='simple scatter example', 
+                x_axis_label='x', y_axis_label='y', plot_width = 400, plot_height = 400) 
+    p3a.scatter([5,3,8,6,4], [3, 1, 2, 6, 5],  legend_label='Trend',
+            color = "red") 
+    st.bokeh_chart(p3a, use_container_width=True)
+
+    p4 = figure(title='simple vbar example', 
+                x_axis_label='x', y_axis_label='y', plot_width = 300, plot_height = 300) 
+    p4.vbar([1, 2, 3, 4, 5], top=[3, 1, 2, 6, 5], width=.5, color = "blue") 
+    st.bokeh_chart(p4, use_container_width=True)
+
+    p5 = figure(title='line + bar example', 
+                x_axis_label='x', y_axis_label='y', plot_width = 300, plot_height = 300) 
+    p5.vbar([1, 2, 3, 4, 5], top=[3, 1, 2, 6, 5], width=.5, color = "blue") 
+    p5.line([1, 2, 3, 4, 5], [3, 1, 2, 6, 5],  line_width = 2, color = "red") 
+    st.bokeh_chart(p5, use_container_width=True)
+
+    x_column = "x"; y_column1 = "y1"; y_column2 = "y2"
+    df = pd.DataFrame()
+    df[x_column] = range(0, 100)
+    df[y_column1] = np.linspace(100, 1000, 100)
+    df[y_column2] = np.linspace(1, 2, 100)
+    p = figure()
+    p.line(df[x_column], df[y_column1], legend_label=y_column1, line_width=1, color="blue")
+    p.extra_y_ranges['Second Axis'] = Range1d(start=1, end=2)
+    p.add_layout(LinearAxis(y_range_name='Second Axis'), "right")
+    p.line(df[x_column], df[y_column2], legend_label=y_column2, line_width=1, 
+           y_range_name="Second Axis", color="green")
+    st.bokeh_chart(p, use_container_width=True)
