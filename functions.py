@@ -11,19 +11,6 @@ def valid_range(x,min,max):
     assert(x<=max), "valid_range, x > max" 
 
 
-def tictoc(func):
-    def wrapper():
-        t1=time.time()
-        func()
-        t2=time.time()-t1
-        print(f'({func.__name__}) ran in {t2} secs)')
-    return wrapper
-
-@tictoc
-def do_this(): time.sleep(1.3)
-#do_this()
-
-
 AWS_BUCKET_URL = "http://streamlit-demo-data.s3-us-west-2.amazonaws.com"
 AWS_BUCKET_FILE = "agri.csv.gz"
 
