@@ -14,7 +14,10 @@
 # Sign into share.streamlit.io
 # Click 'Deploy an app' and then paste in your GitHub URL
 
+# https://archive.ics.uci.edu/datasets
+
 import streamlit as st
+#import warnings
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,13 +29,12 @@ from bokeh.plotting import figure
 from bokeh.models import LinearAxis, Range1d
 from bokeh.models import ColumnDataSource, FactorRange
 from bokeh.transform import factor_cmap
-from functions import *
-from other_app_defs import *
 from varclushi import VarClusHi
 from scipy.stats import norm
 from sklearn import metrics
 from sklearn.model_selection import GridSearchCV, train_test_split
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
+from sklearn.metrics import confusion_matrix, precision_score, recall_score
+from sklearn.metrics import brier_score_loss, f1_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -40,10 +42,22 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.datasets import make_classification
 import xgboost as xgb
 import lightgbm as lgb
+from functions import *
+from other_app_defs import *
+
+#warnings.filterwarnings("ignore")
 
 ##################################################################################
 ##################################################################################
 ##################################################################################
+def tictoc(func):
+    def wrapper():
+        t1=time.time()
+        func()
+        t2=time.time()-t1
+        print(f'({func.__name__}) ran in {t2} secs)')
+    return wrapper
+
 def load_csv_local(_path,_file):
     df = pd.read_csv(os.path.join(_path,_file))
     lowercase = lambda x: str(x).lower() # all vars lowercase
@@ -818,10 +832,11 @@ def get_metrics(y_, p_, typ, mdl):
     Precision = round(precision_score(y_, newp_),3) # PS = TP / (TP + FP)
     Recall = round(recall_score(y_, newp_),3) # RS = TP / (TP + FN)
     F1 = round(f1_score(y_, newp_),3) # F1 = (2 * PS * RS) / (PS + RS)
-    cm_results = [typ, mdl, ks, gini, auc, TP, TN, FP, FN, 
+    Brier = round(brier_score_loss(y_, newp_),3) 
+    cm_results = [typ, mdl, ks, gini, auc, Brier, TP, TN, FP, FN, 
                   Precision, Recall, F1]
     CM_TBL_ = pd.DataFrame(cm_results).T
-    CM_TBL_.columns=["DS", "Model", "KS", "GINI", "AUC",
+    CM_TBL_.columns=["DS", "Model", "KS", "GINI", "AUC", "Brier",
                      "TP", "TN", "FP", "FN", "Precision","Recall","F1"]
     return ROC_, p_thresh, CM_TBL_
     
@@ -1334,6 +1349,8 @@ def AvP_by_vgrps(mdl):
     if len(VLISTF_N) != 0:
         for v in VLISTF_N:
             grps = N_WOE[v][['bin','min','max']]
+            grps['min'] = grps['min'].apply(lambda x: round(x,4))
+            grps['max'] = grps['max'].apply(lambda x: round(x,4))
             grps['range'] = grps["min"].astype(str) +" <-> " + grps["max"].astype(str)
             if v in misslist:
                 dev = wDEV[[DV,f'n{v}',f'p_{mdl}']].rename(
@@ -1444,6 +1461,7 @@ def AvP_by_vgrps_layout(v, avp_n_, avp_c_):
         fig.circle(df["range"], df["p_oot"], y_range_name="Second", size=5, 
                  fill_color="red") # only for markers
         fig.xaxis.major_label_orientation = math.pi/4
+        fig.xaxis.group_label_orientation = math.pi/4
         st.bokeh_chart(fig, use_container_width=True)
 
 @tictoc
@@ -1470,32 +1488,56 @@ def Oracle():
         st.session_state.iLR_RESULTS = iLR_RESULTS
     Altmdls = st.session_state.ALT_MDLS
     if Altmdls != None:
-        if "D-Tree" in Altmdls and st.session_state.DT_RESULTS == None:
+        if "D-Tree" in Altmdls and (
+            st.session_state.DT_RESULTS == None or (
+                st.session_state.DT_RESULTS != None and
+                st.session_state.AppState == "Cluster_Complete" and 
+                st.session_state.ExcludeVars != None)):
             DT_RESULTS = {}      
             DT_RESULTS = Model_DTREE(X, y, Xoot, yoot, merge_p_to_wdevoot=1)  
             DT_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.DT_RESULTS = DT_RESULTS 
-        if "Random Forest" in Altmdls and st.session_state.RF_RESULTS == None:
+        if "Random Forest" in Altmdls and (
+            st.session_state.RF_RESULTS == None or (
+                st.session_state.RF_RESULTS != None and
+                st.session_state.AppState == "Cluster_Complete" and 
+                st.session_state.ExcludeVars != None)):
             RF_RESULTS = {}  
             RF_RESULTS = Model_RFOREST(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
             RF_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.RF_RESULTS = RF_RESULTS
-        if "GBM" in Altmdls and st.session_state.GBM_RESULTS == None:
+        if "GBM" in Altmdls and (
+            st.session_state.GBm_RESULTS == None or (
+                st.session_state.GBM_RESULTS != None and
+                st.session_state.AppState == "Cluster_Complete" and 
+                st.session_state.ExcludeVars != None)):
             GBM_RESULTS = {}
             GBM_RESULTS = Model_GBM(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
             GBM_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.GBM_RESULTS = GBM_RESULTS
-        if "XGB" in Altmdls and st.session_state.XGB_RESULTS == None:
+        if "XGB" in Altmdls and (
+            st.session_state.XGB_RESULTS == None or (
+                st.session_state.XGB_RESULTS != None and
+                st.session_state.AppState == "Cluster_Complete" and 
+                st.session_state.ExcludeVars != None)):
             XGB_RESULTS = {}
             XGB_RESULTS = Model_XGB(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
             XGB_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.XGB_RESULTS = XGB_RESULTS
-        if "MLP-NN" in Altmdls and st.session_state.MLP_RESULTS == None:
+        if "MLP-NN" in Altmdls and (
+            st.session_state.MLP_RESULTS == None or (
+                st.session_state.MLP_RESULTS != None and
+                st.session_state.AppState == "Cluster_Complete" and 
+                st.session_state.ExcludeVars != None)):
             MLP_RESULTS = {}
             MLP_RESULTS = Model_MLP(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
             MLP_RESULTS['SENS'] = pd.DataFrame()
             st.session_state.MLP_RESULTS = MLP_RESULTS
-        if "LGB" in Altmdls and st.session_state.LGB_RESULTS == None:
+        if "LGB" in Altmdls and (
+            st.session_state.LGB_RESULTS == None or (
+                st.session_state.LGB_RESULTS != None and
+                st.session_state.AppState == "Cluster_Complete" and 
+                st.session_state.ExcludeVars != None)):
             LGB_RESULTS = {}
             LGB_RESULTS = Model_LGB(X, y, Xoot, yoot, merge_p_to_wdevoot=1) 
             LGB_RESULTS['SENS'] = pd.DataFrame()
