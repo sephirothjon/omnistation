@@ -416,7 +416,7 @@ def Numer_Only_Layout():
         p.circle(df["range"], df["br"], y_range_name="Second", size=5, 
                  fill_color="black") # only for markers
         p.xaxis.major_label_orientation = math.pi/4
-        c.bokeh_chart(p, use_container_width=True)
+        c.bokeh_chart(p, use_container_width=False)
         with c.expander("Variable Summary Table", expanded=False): st.write(df)
 
 @tictoc
@@ -516,7 +516,7 @@ def NonNumer_Only_Layout():
         p.circle(df["grp"], df["br"], y_range_name="Second", size=5, 
                  fill_color="black") # only for markers
         p.xaxis.major_label_orientation = math.pi/4
-        c.bokeh_chart(p, use_container_width=True)
+        c.bokeh_chart(p, use_container_width=False)
         with c.expander("Variable Summary Table", expanded=False): st.write(df)
 
 @tictoc
@@ -540,15 +540,19 @@ def nWoE():
     k=1
     # Identify rank ordering bin all numvars
     for v in VLISTF_N: 
-        # Get the slope of bin2
-        getslope = RANKPLOTMAP_TBL[v].groupby('grps_2', as_index=False).agg(
-            N=(DV,'count'), Nb=(DV,'sum'))
-        getslope['Npct'] = getslope['N']/st.session_state.N_DEV
-        getslope['br'] = getslope['Nb']/getslope['N']
-        slope = getslope['br'].diff().tail(1).item() #st.write(v, slope)
         # Binning Algorithm
         nlevels = NLEVELS_TBL.loc[NLEVELS_TBL['vname']==v]['nlevels'].item()
         maxgrps = min(15,int(nlevels)) 
+        # Get the slope of bin2
+        getslope = RANKPLOTMAP_TBL[v].groupby('grps_2', as_index=False).agg(
+            N=(DV,'count'), Nb=(DV,'sum'))
+        if len(getslope) == 1:
+            getslope = RANKPLOTMAP_TBL[v].groupby(
+                f'grps_{maxgrps}', as_index=False).agg(
+                    N=(DV,'count'), Nb=(DV,'sum'))
+        getslope['Npct'] = getslope['N']/st.session_state.N_DEV
+        getslope['br'] = getslope['Nb']/getslope['N']
+        slope = getslope['br'].diff().tail(1).item() #st.write(v, slope)
         for b in range(maxgrps, 1, -1):
             df = RANKPLOTMAP_TBL[v].groupby(f'grps_{b}', as_index=False).agg(
                 N=(DV,'count'), Nb=(DV,'sum'), min=(v,'min'), max=(v,'max'))
@@ -559,7 +563,8 @@ def nWoE():
                 df.sort_values(by=['bin'], inplace=True, ascending=False)
             diff = df['br'].diff()
             stillbreakrank = any(r < 0 for r in diff) #st.write(v,b,stillbreakrank)
-            stillbreakrank2 = any(r < .001 for r in df['Nb']/st.session_state.NB_DEV)
+            stillbreakrank2 = any(
+                r < .001 for r in df['Nb']/st.session_state.NB_DEV)
             if stillbreakrank == False and stillbreakrank2 == False: break
         df['range'] = df["min"].astype(str) + " <-> " + df["max"].astype(str)
         df['Ng'] = df['N'] - df['Nb']
@@ -1421,7 +1426,7 @@ def AvP_by_vgrps_layout(v, avp_n_, avp_c_):
         fig = figure(
             x_range=FactorRange(*x), title='AvP Chart',
             x_axis_label='range', y_axis_label='Npct', 
-            plot_height=500, plot_width=750)
+            plot_height=400, plot_width=500)
         counts = sum(zip(df['Npct_dev'], df['Npct_oot']), ()) 
         source = ColumnDataSource(data=dict(x=x, counts=counts))
         fig.vbar(fill_alpha=.5,
@@ -1462,7 +1467,7 @@ def AvP_by_vgrps_layout(v, avp_n_, avp_c_):
                  fill_color="red") # only for markers
         fig.xaxis.major_label_orientation = math.pi/4
         fig.xaxis.group_label_orientation = math.pi/4
-        st.bokeh_chart(fig, use_container_width=True)
+        st.bokeh_chart(fig, use_container_width=False)
 
 @tictoc
 def Oracle():
@@ -1568,17 +1573,19 @@ def Oracle_Layout_assist(DF, mdl, mdltyp):
     x = [(decile, src) for decile in deciles for src in datasrc]
     fig = figure(x_range=FactorRange(*x), 
                  title='Decile Chart', x_axis_label='deciles', 
-                 y_axis_label='avg bad-rate', plot_height=500, plot_width=750)
+                 y_axis_label='avg bad-rate', plot_height=400, plot_width=500)
     counts = sum(zip(Rankp['br_dev'], Rankp['br_oot']), ()) 
     source = ColumnDataSource(data=dict(x=x, counts=counts))
     fig.vbar(x='x', top='counts', width=0.9, source=source, line_color="white",
              fill_color=factor_cmap(
                  'x', palette=['blue','red'], factors=datasrc, start=1, end=2))
     fig.legend.location = "bottom_right"
-    st.bokeh_chart(fig, use_container_width=True) 
+    fig.xaxis.major_label_orientation = math.pi/4
+    fig.xaxis.group_label_orientation = math.pi/4
+    st.bokeh_chart(fig, use_container_width=False) 
     # ROC chart
     fig2 = figure(title='ROC', x_axis_label='fpr', y_axis_label='tpr', 
-                  plot_height=500, plot_width=500)
+                  plot_height=400, plot_width=400)
     fig2.line(ROC_DEV['fpr'], ROC_DEV['tpr'], line_width=2, color="blue",
               legend_label=f'ROC [dev], pthresh={round(ptdev,3)}')
     fig2.line(ROC_OOT['fpr'], ROC_OOT['tpr'], line_width=2, color="red",
@@ -1586,7 +1593,7 @@ def Oracle_Layout_assist(DF, mdl, mdltyp):
     fig2.line(ROC_DEV['fpr'], ROC_DEV['fpr'], line_width=2, color="black",
               legend_label='', line_dash='dashed')
     fig2.legend.location = "bottom_right"
-    st.bokeh_chart(fig2, use_container_width=True)
+    st.bokeh_chart(fig2, use_container_width=False)
     # AvP
     if mdltyp != "LOGISTIC REGRESSION - interact":
         vlist = st.session_state.VLISTF_N + st.session_state.VLISTF_C
