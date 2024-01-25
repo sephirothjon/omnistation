@@ -1,0 +1,22 @@
+.stApp > header {
+    background-color: transparent;
+}
+
+.stApp {
+    margin: auto;
+    overflow: auto;
+    background: #cae9fc;
+    background-attachment: fixed;
+}
+
+/* Main containers */
+.st-emotion-cache-r421ms {
+    background: #dbf9f1;
+    border-color: #000000;
+}
+
+/* Expandable containers */
+.st-emotion-cache-1h9usn1 {
+    background: #dbf9f1;
+    border-color: #000000;
+}
