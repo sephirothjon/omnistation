@@ -7,16 +7,19 @@
     overflow: auto;
     background: #cae9fc;
     background-attachment: fixed;
+    color: #000000
 }
 
 /* Main containers */
 .st-emotion-cache-r421ms {
     background: #dbf9f1;
     border-color: #000000;
+    color: #000000
 }
 
 /* Expandable containers */
 .st-emotion-cache-1h9usn1 {
     background: #dbf9f1;
     border-color: #000000;
+    color: #000000
 }
