@@ -17,7 +17,7 @@
 # https://archive.ics.uci.edu/datasets
 
 import streamlit as st
-#import warnings
+import warnings
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -45,7 +45,7 @@ import lightgbm as lgb
 from functions import *
 from other_app_defs import *
 
-#warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore")
 
 ##################################################################################
 ##################################################################################
@@ -1719,6 +1719,10 @@ def setAppState(x): st.session_state.AppState = x
 if st.session_state.AppState=="Initial": Initialize()
 
 st.set_page_config(layout="wide")
+with open('./style.css') as f:
+    css = f.read()
+st.markdown(f'<style>{css}</style>', unsafe_allow_html=True)
+
 
 st.header("OMNI STATION", divider='grey')
 st.sidebar.header("Controller")
